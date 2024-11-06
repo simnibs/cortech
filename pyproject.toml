@@ -1,0 +1,65 @@
+[project]
+name = "cortech"
+authors = [
+    {name = "Jesper Duemose Nielsen", email = "jesperdn@drcmr.dk" },
+    {name = "Oula Puonti", email = "oulap@drcmr.dk" },
+]
+maintainers = [
+  {name = "Cortech developers"},
+]
+license = {text = "GPL3"}
+description = "Cortical layer placement and analysis"
+# long_description = file: README.md
+# long_description_content_type = text/markdown
+dynamic = ["version"]
+# version=open("simnibs/_version.py").readlines()[-1].split()[-1].strip("\"'"),
+#version = v4.1
+requires-python = ">=3.11"
+
+dependencies =[
+    "nibabel",
+    "numba",
+    "numpy",
+    "pyvista",
+    "scipy",
+]
+
+# [project.urls]  # Optional
+# "Homepage" = "simnibs.org"
+# "Bug Reports" = "https://github.com/simnibs/simnibs/issues"
+# "Source" = "https://github.com/simnibs/simnibs/"
+
+[build-system]
+build-backend = "mesonpy"
+requires = [
+    "meson-python >= 0.15.0",
+    "cython >= 3.0",
+    "wheel >= 0.41",
+    "numpy >= 1.26",
+]
+
+[tool.cibuildwheel]
+build = ["cp311-*", "cp312-*"]
+archs = ["native"]
+
+# Install conan, create default profile, install dependencies
+before-all = "pip install conan && conan profile detect && conan install --build=missing --output-folder={package} ."
+
+#test-command = "pytest {package}/cortech"
+
+[tool.cibuildwheel.linux]
+# Only build manylinux wheels for linux
+manylinux-x86_64-image = "manylinux_2_28"
+skip = ["*musllinux*"]
+
+[tool.cibuildwheel.windows]
+# cibuildwheel does not yet include delvewheel by default and thus does not
+# repair wheels on windows. Therefore, add this
+before-build = "pip install delvewheel"
+repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
+
+# [project.optional-dependencies]
+# test =[
+#     "pytest",
+#     "mock"
+# ]

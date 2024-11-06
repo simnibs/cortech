@@ -1,0 +1,12 @@
+name: cortech
+channels:
+  - conda-forge
+dependencies:
+  - python = 3.11
+  - cython
+  - meson-python
+  - nibabel
+  - numba
+  - numpy
+  - pyvista
+  - scipy

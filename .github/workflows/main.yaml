@@ -1,0 +1,104 @@
+name: Build, Test, and Upload
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - v*
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # fail-fast: true
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-2022]
+
+    if: ${{ startsWith(github.ref, 'refs/tags') || !contains(github.event.head_commit.message, '[skip ci]') }}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Python - set up ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: 3.11
+
+      # We pass the meson_native file created by conan (containing setting
+      # things like compiler etc.) to pip
+      # It seems that the {package} placeholder does not work at this stage,
+      # hence I insert absolute path to the ini file in environment variables
+      # instead.
+
+      # On linux, we CIBW use the manylinux container in which the project is
+      # located in /project/
+      # (see https://cibuildwheel.pypa.io/en/stable/faq/#linux-builds-in-containers)
+    - name: Prepare for build on Linux
+      if: runner.os == 'Linux'
+      run: echo "MESON_NATIVE_FILE=/project/conan_meson_native.ini" >> $GITHUB_ENV
+
+      # On project macos and windows, the project (from checkout) is stored
+      # github.workspace.
+    - name: Prepare for build on macOS
+      if: runner.os == 'macOS'
+      run: echo "MESON_NATIVE_FILE=${{ github.workspace }}/conan_meson_native.ini" >> $GITHUB_ENV
+
+    - name: Prepare for build on Windows
+      if: runner.os == 'Windows'
+      # Apparently, we need to escape backslashes for CIBW
+      run: |
+
+        $meson_native_file = "${{ github.workspace }}\conan_meson_native.ini" -replace "\\", "\\"
+        echo "MESON_NATIVE_FILE=$meson_native_file" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+        # pkg-config is needed for meson dependency discovery.
+        # (we ask conan to write .pc.)
+        choco install pkgconfiglite -y
+
+      # Set persistent environment variables from vcvarsall. The tools
+      # "enter-vsdevshell" in tools/ does the same but in the current shell
+    - uses: ilammy/msvc-dev-cmd@v1
+      if: runner.os == 'Windows'
+
+    - name: Build wheels
+      uses: pypa/cibuildwheel@v2.21.3
+      env:
+        # Additional args to pip
+        # CIBW_BUILD_FRONTEND: "pip; args: -v"
+        # CIBW_BEFORE_BUILD_WINDOWS: tools\enter-vsdevshell.ps1
+        # CIBW_BEFORE_ALL_WINDOWS: ".\\tools\\enter-vsdevshell.bat && pip install conan && conan profile detect && conan install --build=missing --output-folder={package} ."
+        CIBW_CONFIG_SETTINGS: setup-args=--native-file=${{ env.MESON_NATIVE_FILE }}
+
+      with:
+        output-dir: wheelhouse
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: cibw-wheels-${{ matrix.os }}
+        path: ./wheelhouse/*.whl
+
+  publish:
+    name: Publish wheels on ${{ matrix.os }}
+    needs: build
+    permissions:
+      contents: write
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+
+    # OS not important here
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+    - name: Artifact - download
+      uses: actions/download-artifact@v4
+      with:
+        name: cibw-wheels-${{ matrix.os }}
+        path: ${{ github.workspace }}
+    - name: Artifact - Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: ${{ github.workspace }}/*.whl
