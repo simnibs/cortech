@@ -10,7 +10,7 @@ on:
 
 jobs:
   build:
-    name: Build wheels on ${{ matrix.os }}
+    name: Build and test wheels on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
     strategy:
       # fail-fast: true
@@ -59,7 +59,8 @@ jobs:
         choco install pkgconfiglite -y
 
       # Set persistent environment variables from vcvarsall. The tools
-      # "enter-vsdevshell" in tools/ does the same but in the current shell
+      # "enter-vsdevshell" in tools/ does the same but only in the current
+      # shell
     - uses: ilammy/msvc-dev-cmd@v1
       if: runner.os == 'Windows'
 

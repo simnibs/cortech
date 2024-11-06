@@ -24,11 +24,6 @@ dependencies =[
     "scipy",
 ]
 
-# [project.urls]  # Optional
-# "Homepage" = "simnibs.org"
-# "Bug Reports" = "https://github.com/simnibs/simnibs/issues"
-# "Source" = "https://github.com/simnibs/simnibs/"
-
 [build-system]
 build-backend = "mesonpy"
 requires = [
@@ -45,7 +40,8 @@ archs = ["native"]
 # Install conan, create default profile, install dependencies
 before-all = "pip install conan && conan profile detect && conan install --build=missing --output-folder={package} ."
 
-#test-command = "pytest {package}/cortech"
+test-requires = "pytest"
+test-command = "pytest {package}/tests"
 
 [tool.cibuildwheel.linux]
 # Only build manylinux wheels for linux
@@ -57,9 +53,3 @@ skip = ["*musllinux*"]
 # repair wheels on windows. Therefore, add this
 before-build = "pip install delvewheel"
 repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
-
-# [project.optional-dependencies]
-# test =[
-#     "pytest",
-#     "mock"
-# ]
