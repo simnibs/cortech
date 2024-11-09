@@ -8,9 +8,9 @@ from cortech.constants import Curvature
 
 class Hemisphere:
     """A class containing surfaces delineating the white-gray matter boundary
-    as well as the gray matter-CSF boundary.
+    and the gray matter-CSF (pial) boundary.
 
-    Additionally, it may contain information about layers...
+    Additionally, it may contain information about layers.
     """
 
     def __init__(
@@ -165,19 +165,48 @@ class Hemisphere:
         f = cortech.utils.atleast_nd(f, 3)
         return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
 
-    def place_layers(
+    def estimate_layers(
             self,
             thickness: npt.NDArray,
             curv: None | npt.NDArray = None,
             frac: float | npt.NDArray = 0.5,
-            method: str = "equi-volume",
+            method: str = "equivolume",
         ):
-        if method in {"equi-distance", "equi-volume"}:
+        """Estimate layers at `frac`. Given an estimate of the thickness at
+        each vertex (and, for the equivolume model a curvature estimate),
+        return the positions of one or more layers defined by the fraction in
+        `frac`.
+
+        Currently, this function relies on vertex-to-vertex correspondence
+        between white and pial surfaces in that layers are placed
+
+        Parameters
+        ----------
+        thickness :
+            The thickness at each (white, pial) vertex pairs.
+        curv :
+            Curvature estimate at each (white, pial) vertex pairs.
+        frac : float | NDArray
+            The fraction(s) in between white and pial surfaces at which to
+            estimate layer(s). When `method` is equidistance, `frac` is a
+            distance fraction. When `method` is equivolume, `frac` is a volume
+            fraction.
+        method : str
+            The layer placement method to use. This determines how `frac` is to
+            be interpreted.
+
+        Returns
+        -------
+        Position of vertices at the desired (distance or volume) fractions
+        (n_vertices, n_frac).
+
+        """
+        if method in {"equidistance", "equivolume"}:
             match method:
-                case "equi-volume":
-                    assert curv is not None, "Curvature must be provided when using the equi-volume approach"
+                case "equivolume":
+                    assert curv is not None, "Curvature must be provided when using the equivolume method."
                     frac = self.compute_equivolume_fraction(thickness, curv, frac)
-                case "equi-distance":
+                case "equidistance":
                     pass
             return self._layer_from_distance_fraction(frac)
         elif method == "laplace":
@@ -221,6 +250,6 @@ class Cortex:
         self.lh = lh
         self.rh = rh
 
-    def place_layers(self, frac):
-        self.lh.place_layers(frac)
-        self.rh.place_layers(frac)
+    def estimate_layers(self, frac):
+        self.lh.estimate_layers(frac)
+        self.rh.estimate_layers(frac)

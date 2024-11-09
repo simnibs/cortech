@@ -56,6 +56,9 @@ class Surface:
     def as_mesh(self):
         return self.vertices[self.faces]
 
+    def bounding_box(self):
+        return np.stack((self.vertices.min(0), self.vertices.max(0)))
+
     def compute_vertex_adjacency(self, include_self: bool = False):
         """Make sparse adjacency matrix for vertices with connections `tris`."""
         pairs = list(itertools.combinations(np.arange(self.faces.shape[1]), 2))
