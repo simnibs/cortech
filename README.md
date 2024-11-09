@@ -3,7 +3,7 @@ A suite of tools for cortical layer placement and analysis.
 
 ## Installation
 
-This package requires compiling some CGAL functions. You can install CGAL using any method you prefer; meson (which we use for building the package) just needs to locate CGAL with pkg-config.. Here we describe the installation using Conan or Conda for managing the c++ dependencies.
+This package requires compiling some CGAL functions. You can install CGAL using any method you prefer; meson (which we use for building the package) just needs to locate CGAL with pkg-config. Here we describe the installation using Conan or Conda for managing the c++ dependencies.
 
 ### Using Conan
 
