@@ -219,8 +219,8 @@ class Hemisphere:
         hemi,
         white="white",
         pial="pial",
+        inf=None,
         spherical_registration="sphere.reg",
-        inf=None
         # thickness="thickness",
         # curv="avg_curv",
     ):
@@ -237,12 +237,6 @@ class Hemisphere:
             )
 
         return cls(white, pial, inf=inf, spherical_registration=spherical_registration)
-
-    @classmethod
-    def from_simnibs_subject_dir(cls, sub_dir, hemi):
-        assert hemi in {"lh", "rh"}
-
-        raise NotImplementedError
 
 
 class Cortex:
