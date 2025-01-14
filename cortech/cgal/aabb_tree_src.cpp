@@ -6,6 +6,8 @@
 #include <CGAL/AABB_traits.h> // _3
 #include <CGAL/AABB_triangle_primitive.h> // _3
 
+// #include <CGAL/Surface_Mesh.h>
+
 #include <cgal_helpers.h>
 
 // #include <CGAL/Real_timer.h>
@@ -19,6 +21,11 @@ using Primitive = CGAL::AABB_triangle_primitive<KS, Iterator>;
 using AABB_triangle_traits = CGAL::AABB_traits<KS, Primitive>;
 using Tree = CGAL::AABB_tree<AABB_triangle_traits>;
 using Point_and_primitive_id = Tree::Point_and_primitive_id;
+
+// using Segment =  K::Segment_3;
+// using Segment_intersection = std::optional<Tree::Intersection_and_primitive_id<Segment>::Type>;
+// using Intersection_and_primitive_id = AABBTraits::Intersection_and_primitive_id<Segment>
+
 
 std::vector<double> aabb_distance(
     CGAL_t::vecvec<double> vertices,
@@ -54,17 +61,17 @@ std::vector<double> aabb_distance(
     // timer.start();
 
     // build vertices as Points
-    for (int i = 0; i < n_vertices; ++i)
+    for (int i = 0; i < n_vertices; i++)
     {
         vp[i] = Point(vertices[i][0], vertices[i][1], vertices[i][2]);
     }
     // build query point as Points
-    for (int i = 0; i < n_qp; ++i)
+    for (int i = 0; i < n_qp; i++)
     {
         qp[i] = Point(query_points[i][0], query_points[i][1], query_points[i][2]);
     }
     // build faces as Triangles
-    for (int i = 0; i < n_faces; ++i)
+    for (int i = 0; i < n_faces; i++)
         {
             triangles.push_back(Triangle(vp[faces[i][0]], vp[faces[i][1]], vp[faces[i][2]]));
         }
@@ -83,7 +90,7 @@ std::vector<double> aabb_distance(
 
     // query distances
     if (use_hints){
-        for (int i = 0; i < n_qp; ++i)
+        for (int i = 0; i < n_qp; i++)
         {
             Point query_hint = Point(query_hints[i][0], query_hints[i][1], query_hints[i][2]);
             KS::FT squared_distance = tree.squared_distance(qp[i], query_hint);
@@ -91,7 +98,7 @@ std::vector<double> aabb_distance(
         }
     }
     else {
-        for (int i = 0; i < n_qp; ++i)
+        for (int i = 0; i < n_qp; i++)
         {
             KS::FT squared_distance = tree.squared_distance(qp[i]);
             distance[i] = sqrt((double)squared_distance);
@@ -101,6 +108,67 @@ std::vector<double> aabb_distance(
 
     return distance;
 }
+
+
+// std::tuple<std::vector<int>, std::vector<int>, CGAL_t::vecvec<float>> aabb_all_segment_intersections(
+//     CGAL_t::vecvec<float> vertices,
+//     CGAL_t::vecvec<int> faces,
+//     CGAL_t::vecvec<float> segment_start,
+//     CGAL_t::vecvec<float> segment_end
+// ){
+
+//     int n_segments = segment_start.size()
+//     std::vector<float> intersect_point(3);
+
+//     // output
+//     std::vector<int> intersection_ind;   // segment index of intersection
+//     std::vector<int> intersection_prim;  // primitive (face) index of intersection
+//     CGAL_t::vecvec<float> intersection_pos; // position of intersection
+
+
+//     for (int i = 0; i < n_segments; i++){
+//         a = Point(segment_start[i][0], segment_start[i][1], segment_start[i][2])
+//         b = Point(segment_end[i][0], segment_end[i][1], segment_end[i][2])
+//         Segment segment_query(a,b);
+//         // computes all intersections with segment query (as pairs object - primitive_id)
+//         std::list<Segment_intersection> intersections;
+//         tree.all_intersections(segment_query, std::back_inserter(intersections));
+
+//         int n_intersections = intersections.size()
+//         // for (std::list<Segment_intersection>::iterator it=intersections.begin(); it != intersections.end(); ++it){
+//         for (j = 0; j < n_intersections; j++){
+//             intersection = intersections[j]
+
+//             intersection_ind.push_back(i);
+
+//             // first is the position of the intersection (point or segment)
+//             if (Point p = std::get<Point>(&(intersection->first))){
+//                 std::cout << "intersection object is a point" << std::endl;
+//             }
+//             else if (Segment s = std::get<Segment>(&(intersection->first))){
+//                 std::cout << "intersection object is a segment" << std::endl;
+//                 // for (int k=0; k<3; k++){
+//                 // we use the source point (starting point of segment) as point
+//                 // of intersection
+//                 Point p = s->source();
+//             }
+//             else {
+//                 return EXIT_FAILURE;
+//             }
+
+//             for (k = 0; k<3; k++){
+//                 intersect_point[k] = (float) *v;
+//             }
+//             intersection_pos.push_back(pp)
+
+//             // second is the primitive in which the intersection occurred
+//             int prim = (int) *(intersection->second);
+//             intersection_prim.push_back(prim);
+//         }
+
+//     }
+//     return std::make_tuple(intersection_ind, intersection_prim, intersection_pos);
+// }
 
 // std::pair<CGAL_t::vecvec<double>,std::vector<int>> aabb_closest_point_and_primitive(
 //     CGAL_t::vecvec<double> vertices,
@@ -140,17 +208,17 @@ std::vector<double> aabb_distance(
 //     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
 //     // build vertices as Points
-//     // for (int i = 0; i < n_vertices; ++i)
+//     // for (int i = 0; i < n_vertices; i++)
 //     // {
 //     //     vp[i] = Point(vertices[i][0], vertices[i][1], vertices[i][2]);
 //     // }
 //     // build query point as Points
-//     for (int i = 0; i < n_qp; ++i)
+//     for (int i = 0; i < n_qp; i++)
 //     {
 //         qp[i] = Point(query_points[i][0], query_points[i][1], query_points[i][2]);
 //     }
 //     // build faces as Triangles
-//     // for (int i = 0; i < n_faces; ++i)
+//     // for (int i = 0; i < n_faces; i++)
 //     //     {
 //     //         triangles.push_back(Triangle(vp[faces[i][0]], vp[faces[i][1]], vp[faces[i][2]]));
 //     //     }
@@ -170,7 +238,7 @@ std::vector<double> aabb_distance(
 
 //     // query distances
 //     if (use_hints){
-//         for (int i = 0; i < n_qp; ++i)
+//         for (int i = 0; i < n_qp; i++)
 //         {
 //             // Point_and_primitive_id query_hint =
 
@@ -187,7 +255,7 @@ std::vector<double> aabb_distance(
 //         }
 //     }
 //     else {
-//         for (int i = 0; i < n_qp; ++i)
+//         for (int i = 0; i < n_qp; i++)
 //         {
 //             Point_and_primitive_id pp = tree.closest_point_and_primitive(qp[i]);
 //             Point cp = pp.first;

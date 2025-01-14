@@ -42,7 +42,7 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         vector[vector[int]] faces,
         vector[int] constrained_vertices,
         double time,
-        int niter
+        int n_iter
     )
 
     # vector[vector[float]] pmp_angle_and_area_smoothing(
@@ -225,7 +225,7 @@ def smooth_shape(
         faces: npt.ArrayLike,
         constrained_vertices: Union[npt.ArrayLike, None] = None,
         time: float = 0.01,
-        niter: int = 10
+        n_iter: int = 10
     ) -> npt.NDArray:
     """Shape smoothing using mean curvature flow.
 
@@ -250,7 +250,7 @@ def smooth_shape(
     cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices or [], dtype=np.int32)
     cdef vector[vector[float]] v
 
-    v = pmp_smooth_shape(cpp_v, cpp_f, cpp_constrained_vertices, time, niter)
+    v = pmp_smooth_shape(cpp_v, cpp_f, cpp_constrained_vertices, time, n_iter)
 
     return np.array(v, dtype=float)
 

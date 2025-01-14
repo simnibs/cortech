@@ -309,15 +309,15 @@ class Surface:
 
         Returns
         -------
-        out_knn : list[npt.NDArray]
-            List of numpy arrays such that out_knn[i] contains the neighbors of
+        knn : list[npt.NDArray]
+            List of numpy arrays such that knn[i] contains the neighbors of
             vertex i (including i, the 0-ring).
-        out_kr : np.NDArray
-            Array of indices (into `out_knn`) of each ring of neighbors such
+        kr : np.NDArray
+            Array of indices (into `knn`) of each ring of neighbors such
             that
 
-                knn[i, kr[0]:kr[1]] gives the 0-ring (starting) vertices of i,
-                knn[i, kr[1]:kr[2]] gives the 1-ring neighboring vertices of i
+                knn[i][kr[i,0]:kr[i,1]] gives the 0-ring (starting) vertices of i,
+                knn[i][kr[i,1]:kr[i,2]] gives the 1-ring neighboring vertices of i
                 ...
 
             The array has length k+2 and a similar interpretation as
@@ -497,11 +497,11 @@ class Surface:
         self,
         constrained_vertices: npt.NDArray | None = None,
         time: float = 0.01,
-        niter: int = 10,
+        n_iter: int = 10,
         inplace: bool = False,
     ):
         v = pmp.smooth_shape(
-            self.vertices, self.faces, constrained_vertices, time, niter
+            self.vertices, self.faces, constrained_vertices, time, n_iter
         )
         if inplace:
             self.vertices = v
@@ -854,7 +854,6 @@ class Surface:
             for k,v in scalars.items():
                 m[k] = v
         m.save(filename)
-
 
     @classmethod
     def from_freesurfer_subject_dir(cls, subject_dir, surface, read_metadata=True):
