@@ -4,7 +4,6 @@ from pathlib import Path
 import nibabel as nib
 import numpy as np
 import numpy.typing as npt
-import pyvista as pv
 from scipy.ndimage import map_coordinates
 import scipy.sparse
 from scipy.spatial import cKDTree
@@ -250,13 +249,12 @@ class Surface:
     def compute_curvature(
         self, percentile_clip_range=(0.1, 99.9), smooth_iter: int = 0
     ):
-        """Compute principal curvatures. Optionally calculate mean and Gaussian
-        curvatures as well.
+        """Compute principal, mean, and Guassian curvature.
 
         Parameters
         ----------
         niter : int:
-            Number of smoothing iterations. Defaults to 10.
+            Number of smoothing iterations. Defaults to 0.
 
         Returns
         -------
@@ -849,6 +847,8 @@ class Surface:
         )
 
     def save(self, filename: Path | str, scalars: dict | None = None):
+        import pyvista as pv
+
         m = pv.make_tri_mesh(self.vertices, self.faces)
         if scalars is not None:
             for k,v in scalars.items():

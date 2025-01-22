@@ -5,15 +5,13 @@ authors = [
     {name = "Oula Puonti", email = "oulap@drcmr.dk" },
 ]
 maintainers = [
-  {name = "Cortech developers"},
+    {name = "Cortech developers"},
 ]
 license = {text = "GPL3"}
 description = "Cortical layer placement and analysis"
 # long_description = file: README.md
 # long_description_content_type = text/markdown
 dynamic = ["version"]
-# version=open("simnibs/_version.py").readlines()[-1].split()[-1].strip("\"'"),
-#version = v4.1
 requires-python = ">=3.11"
 
 dependencies =[
@@ -23,6 +21,9 @@ dependencies =[
     "pyvista",
     "scipy",
 ]
+
+[project.optional-dependencies]
+vtk = ["pyvista"]
 
 [build-system]
 build-backend = "mesonpy"
