@@ -46,7 +46,7 @@ test-command = "pytest {package}/tests"
 
 [tool.cibuildwheel.linux]
 # Only build manylinux wheels for linux
-manylinux-x86_64-image = "manylinux_2_24"
+manylinux-x86_64-image = "manylinux_2_28"
 skip = ["*musllinux*"]
 
 [tool.cibuildwheel.windows]
