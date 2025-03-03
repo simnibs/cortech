@@ -74,7 +74,7 @@ class Surface:
             A.setdiag(1)
             A = A.tocsr()
 
-        A.sum_duplicates() # ensure canocical format
+        A.sum_duplicates()  # ensure canocical format
 
         return A
 
@@ -108,12 +108,19 @@ class Surface:
         """ """
         face_normals = self.compute_face_normals()
 
-        out = np.zeros_like(self.vertices)
-        for i in range(len(self.faces)):
-            out[self.faces[i]] += face_normals[i]
-        out /= np.linalg.norm(out, ord=2, axis=1)[:, None]
+        out = np.stack(
+            [
+                np.bincount(
+                    self.faces.ravel(),
+                    weights=np.broadcast_to(n[:, None], self.faces.shape).ravel(),
+                    minlength=self.n_vertices,
+                )
+                for n in face_normals.T
+            ],
+            axis=1,
+        )
 
-        return out
+        return out / np.linalg.norm(out, ord=2, axis=1, keepdims=True)
 
     def compute_principal_curvatures(self):
         """Compute principal curvatures and corresponding directions. From these,
@@ -194,7 +201,7 @@ class Surface:
         E = E[:, ::-1]
         # Rotate the tangent vectors so they correspond to the principal
         # curvature directions (i.e., we are back in the original space).
-        E_tangent = E.swapaxes(1,2) @ vt
+        E_tangent = E.swapaxes(1, 2) @ vt
         return D, E_tangent
 
     @staticmethod
@@ -220,7 +227,7 @@ class Surface:
         # Quadratic features
         # (inner product of tangent vectors and vector from v to its neighbors)
         uv = vit[:, :, None] @ nivi[:, None].swapaxes(2, 3)
-        uv = uv[:, :, 0] # (V, 2, N)
+        uv = uv[:, :, 0]  # (V, 2, N)
 
         A = np.concatenate(
             (uv**2, 2 * np.prod(uv, axis=1, keepdims=True)), axis=1
@@ -412,7 +419,9 @@ class Surface:
             vol, vox_coords.T, order=order, mode="constant", cval=0.0, prefilter=True
         )
 
-    def distance_query(self, query_points: npt.NDArray, accelerate: bool | str = "barycenter"):
+    def distance_query(
+        self, query_points: npt.NDArray, accelerate: bool | str = "barycenter"
+    ):
         """Query the distance between `query_points` and the surface.
 
         Parameters
@@ -429,7 +438,9 @@ class Surface:
             to each query point and use this as the "query hint". This seems to
             work well so we set this as the default.
         """
-        assert isinstance(accelerate, bool) or accelerate in {"barycenter", }
+        assert isinstance(accelerate, bool) or accelerate in {
+            "barycenter",
+        }
         if accelerate == "barycenter":
             barycenters = self.compute_face_barycenters()
             tree = cKDTree(barycenters)
@@ -489,7 +500,9 @@ class Surface:
 
     def points_inside_surface(self, points, on_boundary_is_inside: bool = True):
         """For each point in `points`, test it is inside the surface or not."""
-        return pmp.points_inside_surface(self.vertices, self.faces, points, on_boundary_is_inside)
+        return pmp.points_inside_surface(
+            self.vertices, self.faces, points, on_boundary_is_inside
+        )
 
     def shape_smooth(
         self,
@@ -851,7 +864,7 @@ class Surface:
 
         m = pv.make_tri_mesh(self.vertices, self.faces)
         if scalars is not None:
-            for k,v in scalars.items():
+            for k, v in scalars.items():
                 m[k] = v
         m.save(filename)
 
