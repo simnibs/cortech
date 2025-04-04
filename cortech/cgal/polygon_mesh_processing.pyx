@@ -45,16 +45,16 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         int n_iter
     )
 
-    # vector[vector[float]] pmp_angle_and_area_smoothing(
-    #     vector[vector[float]] vertices,
-    #     vector[vector[int]] faces,
-    #     vector[int] constrained_vertices,
-    #     int niter,
-    #     cppbool use_angle_smoothing,
-    #     cppbool use_area_smoothing,
-    #     cppbool use_delaunay_flips,
-    #     cppbool use_safety_constraints
-    # )
+    vector[vector[float]] pmp_smooth_angle_and_area(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+        vector[int] constrained_vertices,
+        int niter,
+        cppbool use_angle_smoothing,
+        cppbool use_area_smoothing,
+        cppbool use_delaunay_flips,
+        cppbool use_safety_constraints
+    )
 
     # vector[vector[float]] pmp_fair(
     #     vector[vector[float]] vertices,
@@ -83,7 +83,7 @@ def points_inside_surface(
         points: npt.NDArray,
         on_boundary_is_inside: bool = True,
     ) -> npt.NDArray:
-    """Compute the intersecting pairs of triangles in a surface mesh.
+    """
 
     Parameters
     ----------
@@ -255,50 +255,51 @@ def smooth_shape(
     return np.array(v, dtype=float)
 
 
-# def angle_and_area_smoothing(
-#         vertices: npt.ArrayLike,
-#         faces: npt.ArrayLike,
-#         constrained_vertices: Union[npt.ArrayLike, None] = None,
-#         niter: int = 10,
-#         use_angle_smoothing: bool = True,
-#         use_area_smoothing: bool = True,
-#         use_delaunay_flips: bool = True,
-#         use_safety_constraints: bool = False
-#     ):
-#     """Vertex smoothing preserving shape.
+def smooth_angle_and_area(
+        vertices: npt.ArrayLike,
+        faces: npt.ArrayLike,
+        constrained_vertices: Union[npt.ArrayLike, None] = None,
+        n_iter: int = 1,
+        use_angle_smoothing: bool = True,
+        use_area_smoothing: bool = False,
+        use_delaunay_flips: bool = True,
+        use_safety_constraints: bool = False
+    ):
+    """Vertex smoothing preserving shape.
 
-#     Parameters
-#     ----------
-#     vertices: npt.ArrayLike
-#     faces: npt.ArrayLike
-#     constrained_vertices : Union[npt.ArrayLike, None]
-#     niter: int
-#     use_angle_smoothing: bool = True
-#     use_area_smoothing: bool = True
-#     use_delaunay_flips: bool = True
-#     use_safety_constraints: bool = False
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+    constrained_vertices : Union[npt.ArrayLike, None]
+    niter: int
+    use_angle_smoothing: bool = True
+    use_area_smoothing: bool = True
+        This needs the Ceres solver library which we do not use be default.
+    use_delaunay_flips: bool = True
+    use_safety_constraints: bool = False
 
-#     Returns
-#     -------
+    Returns
+    -------
 
 
-#     """
-#     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
-#     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-#     cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices or [], dtype=np.int32)
-#     cdef vector[vector[float]] v
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices or [], dtype=np.int32)
+    cdef vector[vector[float]] v
 
-#     v = pmp_angle_and_area_smoothing(
-#         cpp_v,
-#         cpp_f,
-#         cpp_constrained_vertices,
-#         niter,
-#         use_angle_smoothing,
-#         use_area_smoothing,
-#         use_delaunay_flips,
-#         use_safety_constraints
-#     )
-#     return np.array(v, dtype=float)
+    v = pmp_smooth_angle_and_area(
+        cpp_v,
+        cpp_f,
+        cpp_constrained_vertices,
+        n_iter,
+        use_angle_smoothing,
+        use_area_smoothing,
+        use_delaunay_flips,
+        use_safety_constraints
+    )
+    return np.array(v, dtype=float)
 
 
 # def fair(vertices, faces, vertex_indices):

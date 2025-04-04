@@ -4,7 +4,7 @@
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 // #include <CGAL/Real_timer.h>
 #include <CGAL/Surface_mesh.h>
-// #include <CGAL/Polygon_mesh_processing/angle_and_area_smoothing.h>
+#include <CGAL/Polygon_mesh_processing/angle_and_area_smoothing.h>
 #include <CGAL/Polygon_mesh_processing/connected_components.h>
 // #include <CGAL/Polygon_mesh_processing/corefinement.h>
 // #include <CGAL/Polygon_mesh_processing/fair.h>
@@ -15,7 +15,6 @@
 #include <CGAL/Side_of_triangle_mesh.h>
 
 #include <cgal_helpers.h>
-
 
 using K = CGAL::Exact_predicates_inexact_constructions_kernel;
 using Point_3 = K::Point_3;
@@ -266,42 +265,42 @@ CGAL_t::vecvec<float> pmp_smooth_shape(
     return vertices_out;
 }
 
-// CGAL_t::vecvec<float> pmp_angle_and_area_smoothing(
-//     CGAL_t::vecvec<float> vertices,
-//     CGAL_t::vecvec<int> faces,
-//     std::vector<int> constrained_vertices,
-//     const unsigned int nb_iterations,
-//     bool use_angle_smoothing = true,
-//     bool use_area_smoothing = true,
-//     bool use_delaunay_flips = true,
-//     bool use_safety_constraints = false)
-// {
-//     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+CGAL_t::vecvec<float> pmp_smooth_angle_and_area(
+    CGAL_t::vecvec<float> vertices,
+    CGAL_t::vecvec<int> faces,
+    std::vector<int> constrained_vertices,
+    const unsigned int nb_iterations,
+    bool use_angle_smoothing = true,
+    bool use_area_smoothing = true,
+    bool use_delaunay_flips = true,
+    bool use_safety_constraints = false)
+{
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
-//     CGAL::Real_timer timer;
-//     timer.start();
+    // CGAL::Real_timer timer;
+    // timer.start();
 
-//     std::set<vertex_descriptor> indices;
-//     for (int i : constrained_vertices)
-//     {
-//         indices.insert((vertex_descriptor)i);
-//     }
-//     std::cout << "constraining " << indices.size() << " vertices" << std::endl;
-//     CGAL::Boolean_property_map<std::set<vertex_descriptor>> vcmap(indices);
+    std::set<vertex_descriptor> indices;
+    for (int i : constrained_vertices)
+    {
+        indices.insert((vertex_descriptor)i);
+    }
+    // std::cout << "constraining " << indices.size() << " vertices" << std::endl;
+    CGAL::Boolean_property_map<std::set<vertex_descriptor>> vcmap(indices);
 
-//     PMP::angle_and_area_smoothing(mesh, CGAL::parameters::number_of_iterations(nb_iterations)
-//                                             .use_angle_smoothing(use_angle_smoothing)
-//                                             .use_area_smoothing(use_area_smoothing)
-//                                             .use_Delaunay_flips(use_delaunay_flips)
-//                                             .use_safety_constraints(use_safety_constraints)
-//                                             .vertex_is_constrained_map(vcmap));
+    PMP::angle_and_area_smoothing(mesh, CGAL::parameters::number_of_iterations(nb_iterations)
+                                            .use_angle_smoothing(use_angle_smoothing)
+                                            .use_area_smoothing(use_area_smoothing)
+                                            .use_Delaunay_flips(use_delaunay_flips)
+                                            .use_safety_constraints(use_safety_constraints)
+                                            .vertex_is_constrained_map(vcmap));
 
-//     std::cout << "Elapsed time (smoothing): " << timer.time() << std::endl;
+    // std::cout << "Elapsed time (smoothing): " << timer.time() << std::endl;
 
-//     auto vertices_out = CGAL_sm::extract_vertices(mesh);
+    auto vertices_out = CGAL_sm::extract_vertices(mesh);
 
-//     return vertices_out;
-// }
+    return vertices_out;
+}
 
 // CGAL_t::vecvec<float> pmp_fair(
 //     CGAL_t::vecvec<float> vertices,

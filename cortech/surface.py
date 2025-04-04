@@ -18,12 +18,22 @@ from cortech.visualization import plot_surface
 
 class Surface:
     def __init__(
-        self, vertices: npt.NDArray, faces: npt.NDArray, metadata=None
+        self,
+        vertices: npt.NDArray,
+        faces: npt.NDArray,
+        edge_pairs: npt.NDArray | None = None,
+        metadata=None,
     ) -> None:
         """Class for representing a triangulated surface."""
         self.vertices = vertices
         self.faces = faces
         self.metadata = metadata
+
+        self.edge_pairs = (
+            np.array([[1, 2], [2, 0], [0, 1]], dtype=self.faces.dtype)
+            if edge_pairs is None
+            else edge_pairs
+        )
 
     def is_valid(self):
         # and check that n_faces and n_vertices match for whatever number of vertices per face....
@@ -67,6 +77,84 @@ class Surface:
         data = np.ones_like(row_ind)
         A = scipy.sparse.csr_array(
             (data / 2, (row_ind, col_ind)), shape=(self.n_vertices, self.n_vertices)
+        )
+
+        if include_self:
+            A = A.tolil()
+            A.setdiag(1)
+            A = A.tocsr()
+
+        A.sum_duplicates()  # ensure canocical format
+
+        return A
+
+    def compute_edges(
+        self,
+        sort_dim0: bool = False,
+        sort_dim1: bool = False,
+    ):
+        edges = np.stack(
+            [
+                self.faces[:, self.edge_pairs[:, 0]],
+                self.faces[:, self.edge_pairs[:, 1]],
+            ],
+            axis=2,
+        )
+        edges = edges.reshape((-1, 2))
+        edges = np.sort(edges, axis=1) if sort_dim1 else edges
+        edges = edges[np.argsort(edges[:, 0])] if sort_dim0 else edges
+        return edges
+
+    # def compute_faces_to_edges(self):
+    #     edges = self.compute_edges(sort_dim1=True)  # e.g., (1,0) and (0,1) -> (0,1)
+
+    #     # trick from pytorch3d: use a hash to speed up the call to unique which
+    #     # is otherwise slow
+    #     # ensure int64 to avoid overflow (assumes fewer than ~3e9 vertices)
+    #     h = self.make_edge_hash(edges.to(torch.int64), self.n_vertices)
+
+    #     if retain_edge_order:
+    #         # remap the hashed edges to 0, ..., n_edges-1 preserving original
+    #         # order of the edges
+    #         x = torch.zeros(h.shape, dtype=self.dtype, device=self.device)
+    #         hb = h.argsort(stable=True).to(self.dtype)
+    #         x[hb] = hb[::2].repeat_interleave(2)  # each edge occurs exactly twice
+    #         u, idx = x.unique(return_inverse=True)
+    #         u_edges = edges[u]
+    #         u_edges_prev_order = u_edges[u_edges[:, 0] < self.n_vertices_lower_order()]
+    #     else:
+    #         # this sorts the edges based on the hash
+    #         u, idx = h.unique(return_inverse=True)
+    #         u_edges = self.undo_edge_hash(u, self.n_vertices).to(self.dtype)
+    #         # this eliminates all edges between upsampled vertices
+    #         u_edges_prev_order = u_edges[: len(u) // 2]
+
+    #     faces_to_edges = idx.reshape(self.n_faces, 3)
+
+    def compute_face_adjacency(self, include_self: bool = False):
+        edges = self.compute_edges(sort_dim1=True)  # e.g., (1,0) and (0,1) -> (0,1)
+
+        # Now sort the vertex-vertex edges
+        # first column has 1st priority
+        a0 = edges[:, 0].argsort()
+        s0 = edges[a0]
+        # second column has 2nd priority (actually, we just want to sub-sort `s0`)
+        a1 = s0[:, 1].argsort()
+        s1 = s0[a1]
+        # "stable" keeps order of like items, hence both columns will be
+        # sorted after this operation
+        a2 = np.argsort(s1[:, 0], kind="stable")  # .argsort(stable=True)
+        # s2 = s1[a2] # the sorted edges
+
+        faces_enum = np.broadcast_to(
+            np.arange(self.n_faces)[:, None], self.faces.shape
+        ).ravel()
+        face_adjacency = faces_enum[a0[a1[a2]]].reshape(-1, 2)
+
+        data = np.ones(face_adjacency.shape[0])
+        A = scipy.sparse.csr_array(
+            (data, (face_adjacency[:, 0], face_adjacency[:, 1])),
+            shape=(self.n_faces, self.n_faces),
         )
 
         if include_self:
@@ -284,7 +372,7 @@ class Surface:
 
         if smooth_iter > 0:
             k1, k2, H, K = np.ascontiguousarray(
-                self.gaussian_smooth(
+                self.smooth_gaussian(
                     np.stack((k1, k2, H, K), axis=1), n_iter=smooth_iter
                 ).T
             )
@@ -293,11 +381,25 @@ class Surface:
         # store the curvature directions as well
         # self.curv_vec = Curvature(k1=E[:, 0], k2=[E[:, 1]])
 
+    def connected_components(self, constrained_faces: npt.NDArray | None = None):
+        """Compute connected components on the surface.
+
+        Returns
+        -------
+        component_label : npt.NDArray
+            The label associated with each face.
+        component_size : npt.NDArray
+            The size associated with each label.
+        """
+        return pmp.connected_components(self.vertices, self.faces, constrained_faces)
+
+
     def k_ring_neighbors(
         self,
         k: int,
         indices: None | npt.NDArray = None,
         adj: None | scipy.sparse.csr_array = None,
+        which: str = "vertices",
     ):
         """Compute k-ring neighborhoods of vertices.
 
@@ -329,15 +431,20 @@ class Surface:
             `scipy.sparse.csr_array.indptr`.
 
         """
-        # k_max : the maximum ring neighbor to gather
         assert k > 0, "`k` must be a positive integer."
-        adj = self.compute_vertex_adjacency() if adj is None else adj
-        n = self.n_vertices
 
-        if indices is None:
-            indices = np.arange(n).reshape(-1, 1)
-        else:
-            assert indices.ndim == 2, "`indices` must be (n, n_start_indices)"
+        match which:
+            case "vertices":
+                adj = self.compute_vertex_adjacency() if adj is None else adj
+                n = self.n_vertices
+            case "faces":
+                adj = self.compute_face_adjacency() if adj is None else adj
+                n = self.n_faces
+            case _:
+                raise ValueError
+
+        indices = np.arange(n).reshape(-1, 1) if indices is None else indices
+        assert indices.ndim == 2, "`indices` must be (n, n_start_indices)"
 
         knn, kr = cortech.utils.k_ring_neighbors(k, indices, n, adj.indices, adj.indptr)
 
@@ -475,18 +582,6 @@ class Surface:
         """Compute intersecting pairs of triangles."""
         return pmp.self_intersections(self.vertices, self.faces)
 
-    def connected_components(self, constrained_faces: npt.NDArray | None = None):
-        """Compute connected components on the surface.
-
-        Returns
-        -------
-        component_label : npt.NDArray
-            The label associated with each face.
-        component_size : npt.NDArray
-            The size associated with each label.
-        """
-        return pmp.connected_components(self.vertices, self.faces, constrained_faces)
-
     def isotropic_remeshing(
         self, target_edge_length: float, n_iter: int = 1, inplace: bool = False
     ):
@@ -504,57 +599,36 @@ class Surface:
             self.vertices, self.faces, points, on_boundary_is_inside
         )
 
-    def shape_smooth(
-        self,
-        constrained_vertices: npt.NDArray | None = None,
-        time: float = 0.01,
-        n_iter: int = 10,
-        inplace: bool = False,
-    ):
-        v = pmp.smooth_shape(
-            self.vertices, self.faces, constrained_vertices, time, n_iter
-        )
+
+    def smooth_angle_and_area(self, inplace: bool = False, **kwargs):
+        v = pmp.angle_and_area_smoothing(self.vertices, self.faces, **kwargs)
         if inplace:
             self.vertices = v
         return v
 
-    def taubin_smooth(
+    def smooth_gaussian(
         self,
-        arr=None,
-        a: float = 0.8,
-        b: float = -0.85,
+        arr: npt.NDArray | None = None,
+        a: float = 0.6,
         n_iter: int = 1,
         inplace: bool = False,
     ):
-        arr, A, nn, out = self._prepare_for_smooth(arr, inplace)
+        """Perform a number of Gaussian (Laplacian) smoothing steps."""
+        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
         for _ in range(n_iter):
-            arr = self._gaussian_smooth_step(arr, a, A, nn, out)  # Gauss step
-            arr = self._gaussian_smooth_step(arr, b, A, nn, out)  # Taubin step
+            arr = self._smooth_gaussian_step(arr, a, A, nn, out)
         return arr
 
-    def gaussian_smooth(
-        self, arr=None, a: float = 0.8, n_iter: int = 1, inplace: bool = False
-    ):
-        arr, A, nn, out = self._prepare_for_smooth(arr, inplace)
-        for _ in range(n_iter):
-            arr = self._gaussian_smooth_step(arr, a, A, nn, out)
-        return arr
+    def _smooth_gaussian_prepare(
+        self, arr: npt.NDArray | None = None, inplace: bool = False
+    ) -> tuple[npt.NDArray, scipy.sparse.csr_array, npt.NDArray, npt.NDArray | None]:
+        """Precompute a few things needs when applying Gaussian smoothing
+        steps.
 
-    def _gaussian_smooth_step(self, x, a, A, nn, out=None):
-        """Perform the following update
+        nn:
+            Number of 1-ring neighbors.
 
-            x_i = x_i + a * sum_{j in N(i)} (w_ij * (x_j - x_i))
-
-        where N(i) is the neighborhood of i. Here we use w_ij = 1/|N(i)| where
-        |N(i)| is the number of neighbors of i.
         """
-        if out is None:
-            return x + a * (A @ x / nn - x)
-        else:
-            out += a * (A @ x / nn - x)
-            return out
-
-    def _prepare_for_smooth(self, arr, inplace):
         arr = arr if arr is not None else self.vertices
         out = arr if inplace else None
 
@@ -562,6 +636,90 @@ class Surface:
         nn = A.sum(0)[:, None]  # A is symmetric
 
         return arr, A, nn, out
+
+    def _smooth_gaussian_step(
+        self, x: npt.NDArray, a: float, A: scipy.sparse.csr_array, nn, out=None
+    ):
+        """Perform a single Gaussian smoothing steps, i.e.,
+
+            x_i = x_i + a * sum_{j in N(i)} (w_ij * (x_j - x_i))
+
+        where N(i) is the neighborhood of i. Here we use w_ij = 1/|N(i)| where
+        |N(i)| is the number of neighbors of i.
+
+        Parameters
+        ----------
+        x : npt.NDArray
+            The array to smooth (can be the vertex coordinates or a function
+            defined on the vertices).
+        a : float
+            Step size.
+        A :
+            Vertex adjacency matrix.
+        nn :
+            Number of 1-ring neighbors.
+        out :
+            Array in which to store the result.
+        """
+        if out is None:
+            return x + a * (A @ x / nn - x)
+        else:
+            out += a * (A @ x / nn - x)
+            return out
+
+    def smooth_shape(
+        self,
+        constrained_vertices: npt.NDArray | None = None,
+        time: float = 0.01,
+        n_iter: int = 10,
+        inplace: bool = False,
+    ):
+        """Perform shape smoothing via mean curvature flow (preserving vertex
+        density).
+
+        Parameters
+        ----------
+        constrained_vertices:
+            Indices of vertices to fix (smoothing will not be applied to these
+            vertices).
+        time
+        n_iter
+        inplace : bool
+
+        References
+        ----------
+        https://doc.cgal.org/latest/Polygon_mesh_processing/index.html
+        """
+        v = pmp.smooth_shape(
+            self.vertices, self.faces, constrained_vertices, time, n_iter
+        )
+        if inplace:
+            self.vertices = v
+        return v
+
+
+    def smooth_taubin(
+        self,
+        arr: npt.NDArray | None = None,
+        a: float = 0.6,
+        b: float = -0.61,
+        n_iter: int = 1,
+        inplace: bool = False,
+    ):
+        """Perform Taubin smoothing, i.e., a positive (standard) Gaussian
+        smoothing step (`a`) followed by a Gaussian step with negative weight
+        (`b`).
+
+        References
+        ----------
+        https://graphics.stanford.edu/courses/cs468-01-fall/Papers/taubin-smoothing.pdf
+        """
+        assert 0 < a < -b, "a should be between 0 and -b."
+        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
+        for _ in range(n_iter):
+            arr = self._smooth_gaussian_step(arr, a, A, nn, out)  # Gauss step
+            arr = self._smooth_gaussian_step(arr, b, A, nn, out)  # Taubin step
+        return arr
 
     def get_triangle_neighbors(self):
         """For each point get its neighboring triangles (i.e., the triangles to

@@ -12,6 +12,8 @@ cpp_cgal_args = cpp.get_supported_arguments(
 )
 
 cpp_cgal_macros = ['-DCGAL_EIGEN3_ENABLED']
+# PMP area smoothing needs this
+# -DCGAL_PMP_USE_CERES_SOLVER
 
 # the current source (and build) dir is included by default; for header files
 # and source files
@@ -33,7 +35,7 @@ pmp = python.extension_module(
     'polygon_mesh_processing',
     cython_gen_cpp.process('polygon_mesh_processing.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
-    dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep],
+    dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep, ceres_dep],
     install: true,
     subdir: cgal_dir,
 )
