@@ -1,7 +1,7 @@
 # cortech
 A suite of tools for cortical layer placement and analysis.
 
-## Installation
+## Installation From Source
 
 This package requires compiling some CGAL functions. You can install CGAL using any method you prefer; meson (which we use for building the package) just needs to locate CGAL with pkg-config. Here we describe the installation using Conan or Conda for managing the c++ dependencies.
 
@@ -15,7 +15,7 @@ First
 
 Then
 
-    pip install --no-build-isolation --no-deps --config-settings=setup-args=--native-file=$PWD/conan_deps/conan_meson_native.ini -e .
+    pip install --config-settings=setup-args=--native-file=$PWD/conan_deps/conan_meson_native.ini --no-build-isolation --no-deps -e .
 
 ### Using Conda
 If you are using `conda` to manage build dependencies, then start by running the following script to generate the necessary pkg config files
