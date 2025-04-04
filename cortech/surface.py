@@ -13,8 +13,6 @@ import cortech.utils
 import cortech.cgal.polygon_mesh_processing as pmp
 import cortech.cgal.convex_hull_3
 from cortech.constants import Curvature
-from cortech.visualization import plot_surface
-
 
 class Surface:
     def __init__(
@@ -393,7 +391,6 @@ class Surface:
         """
         return pmp.connected_components(self.vertices, self.faces, constrained_faces)
 
-
     def k_ring_neighbors(
         self,
         k: int,
@@ -599,7 +596,6 @@ class Surface:
             self.vertices, self.faces, points, on_boundary_is_inside
         )
 
-
     def smooth_angle_and_area(self, inplace: bool = False, **kwargs):
         v = pmp.angle_and_area_smoothing(self.vertices, self.faces, **kwargs)
         if inplace:
@@ -696,7 +692,6 @@ class Surface:
         if inplace:
             self.vertices = v
         return v
-
 
     def smooth_taubin(
         self,
@@ -1013,6 +1008,8 @@ class Surface:
     #     self.vertices = np.concatenate((self.vertices, other.vertices))
 
     def plot(self, scalars=None, mesh_kwargs=None, plotter_kwargs=None):
+        # only works when pyvista is installed
+        from cortech.visualization import plot_surface
         plot_surface(
             self, scalars, mesh_kwargs=mesh_kwargs, plotter_kwargs=plotter_kwargs
         )
