@@ -12,6 +12,9 @@
 #include <CGAL/Polygon_mesh_processing/repair_self_intersections.h>
 #include <CGAL/Polygon_mesh_processing/self_intersections.h>
 #include <CGAL/Polygon_mesh_processing/smooth_shape.h>
+#include <CGAL/Polygon_mesh_processing/tangential_relaxation.h>
+// #include <CGAL/Polygon_mesh_processing/interpolated_corrected_curvatures.h>
+
 #include <CGAL/Side_of_triangle_mesh.h>
 
 #include <cgal_helpers.h>
@@ -23,6 +26,60 @@ using vertex_descriptor = Surface_mesh::Vertex_index;
 using face_descriptor = boost::graph_traits<Surface_mesh>::face_descriptor;
 
 namespace PMP = CGAL::Polygon_mesh_processing;
+
+// // std::tuple<std::vector<float>,std::vector<float>,std::vector<float>,std::vector<float>,CGAL_t::vecvec<float>,CGAL_t::vecvec<float>>
+// int pmp_interpolated_corrected_curvatures(
+//     CGAL_t::vecvec<float> vertices,
+//     CGAL_t::vecvec<int> faces,
+// )
+// {
+//     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+//     int n_vertices = mesh.number_of_vertices();
+
+//     // define property map to store curvature value and directions
+//     // boost::property_map<Surface_mesh, CGAL::dynamic_vertex_property_t<K::FT>>::type mean_curv_map = get(CGAL::dynamic_vertex_property_t<K::FT>(), mesh);
+//     // boost::property_map<Surface_mesh, CGAL::dynamic_vertex_property_t<K::FT>>::type gaussian_curv_map = get(CGAL::dynamic_vertex_property_t<K::FT>(), mesh);
+//     // boost::property_map<Surface_mesh, CGAL::dynamic_vertex_property_t<PMP::Principal_curvatures_and_directions<K>>>::type principal_curv_and_dir_map = get(CGAL::dynamic_vertex_property_t<PMP::Principal_curvatures_and_directions<K>>(), mesh);
+
+
+//     // creating and tying surface mesh property maps for curvatures (with defaults = 0)
+//     bool created = false;
+//     Mesh::Property_map<vertex_descriptor, K::FT> mean_curv_map, gaussian_curv_map;
+
+//     boost::tie(mean_curv_map, created) = mesh.add_property_map<vertex_descriptor, K::FT>("v:mean_curv_map", 0);
+//     assert(created);
+//     boost::tie(gaussian_curv_map, created) = mesh.add_property_map<vertex_descriptor, K::FT>("v:gaussian_curv_map", 0);
+//     assert(created);
+//     Mesh::Property_map<vertex_descriptor, PMP::Principal_curvatures_and_directions<K>> principal_curvatures_and_directions_map;
+//     boost::tie(principal_curvatures_and_directions_map, created) = mesh.add_property_map<vertex_descriptor, PMP::Principal_curvatures_and_directions<K>>("v:principal_curv_and_dir_map", { 0, 0, K::Vector_3(0,0,0), K::Vector_3(0,0,0) });
+//     assert(created);
+
+
+//     PMP::interpolated_corrected_curvatures(mesh,
+//         CGAL::parameters::vertex_mean_curvature_map(mean_curv_map)
+//                           .vertex_Gaussian_curvature_map(gaussian_curv_map)
+//                           .vertex_principal_curvatures_and_directions_map(principal_curv_and_dir_map)
+//         // uncomment to use an expansion ball radius of 0.5 to estimate the curvatures
+//         //                 .ball_radius(0.5)
+//     );
+
+//     std::vector<float> H(n_vertices), K(n_vertices), P1(n_vertices), P2(n_vertices);
+//     CGAL_t::vecvec<float> P1_VEC, P2_VEC;
+//     std::vector<std::vector<float>>
+//     int i = 0;
+//     for (vertex_descriptor v : mesh.vertices())
+//     {
+//         H[i] = get(mean_curv_map, v);
+//         K[i] = get(gaussian_curv_map, v);
+//         auto PC = get(principal_curv_and_dir_map, v);
+//         P1[i] = PC.min_curvature;
+//         P2[i] = PC.max_curvature;
+//         P1_VEC[i] = PC.min_direction;
+//         P2_VEC[i] = PC.max_direction;
+//         i++;
+//     }
+//     return 1; //std::make_tuple(H, K, P1, P2, P1_VEC, P2_VEC);
+// }
 
 std::vector<bool> pmp_points_inside_surface(
     CGAL_t::vecvec<float> vertices,
@@ -231,6 +288,31 @@ std::pair<std::vector<int>,std::vector<int>> pmp_connected_components(
 
 //     return pair;
 // }
+
+CGAL_t::vecvec<float> pmp_tangential_relaxation(
+    CGAL_t::vecvec<float> vertices,
+    CGAL_t::vecvec<int> faces,
+    std::vector<int> constrained_vertices,
+    const unsigned int nb_iterations)
+{
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+
+    std::set<vertex_descriptor> indices;
+    for (int i : constrained_vertices)
+    {
+        indices.insert((vertex_descriptor)i);
+    }
+    CGAL::Boolean_property_map<std::set<vertex_descriptor>> vcmap(indices);
+
+    PMP::tangential_relaxation(
+        mesh,
+        CGAL::parameters::number_of_iterations(nb_iterations)
+            .vertex_is_constrained_map(vcmap));
+
+    auto vertices_out = CGAL_sm::extract_vertices(mesh);
+
+    return vertices_out;
+}
 
 CGAL_t::vecvec<float> pmp_smooth_shape(
     CGAL_t::vecvec<float> vertices,

@@ -45,6 +45,22 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         int n_iter
     )
 
+    vector[vector[float]] pmp_tangential_relaxation(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+        vector[int] constrained_vertices,
+        int n_iter
+    )
+
+    # int pmp_interpolated_corrected_curvatures(
+    #     vector[vector[float]] vertices,
+    #     vector[vector[int]] faces,
+    # )
+    # tuple[vector[float],vector[float],vector[float],vector[float],vector[vector[float]],vector[vector[float]]] pmp_interpolated_corrected_curvatures(
+    #     vector[vector[float]] vertices,
+    #     vector[vector[int]] faces,
+    # )
+
     vector[vector[float]] pmp_smooth_angle_and_area(
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
@@ -66,7 +82,7 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
         double target_edge_length,
-        int n_iterations,
+        int n_iter,
     )
 
     # pair[vector[vector[float]], vector[vector[int]]] pmp_corefine_and_union(
@@ -224,8 +240,8 @@ def smooth_shape(
         vertices: npt.ArrayLike,
         faces: npt.ArrayLike,
         constrained_vertices: Union[npt.ArrayLike, None] = None,
-        time: float = 0.01,
-        n_iter: int = 10
+        time: float = 0.1,
+        n_iter: int = 1
     ) -> npt.NDArray:
     """Shape smoothing using mean curvature flow.
 
@@ -251,6 +267,54 @@ def smooth_shape(
     cdef vector[vector[float]] v
 
     v = pmp_smooth_shape(cpp_v, cpp_f, cpp_constrained_vertices, time, n_iter)
+
+    return np.array(v, dtype=float)
+
+
+# def interpolated_corrected_curvatures(vertices: npt.ArrayLike, faces: npt.ArrayLike):
+#     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+#     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+#     cdef vector[float] H, K, pc_min, pc_max
+#     cdef vector[vector[float]] pc_min_vec, pc_max_vec
+#     cdef int x
+
+#     x = pmp_interpolated_corrected_curvatures(cpp_v, cpp_f)
+#     # H,K,pc_min,pc_max,pc_min_vec,pc_max_vec = pmp_interpolated_corrected_curvatures(cpp_v, cpp_f)
+#     # H = np.array(H,dtype=float)
+#     # K = np.array(K,dtype=float)
+#     # pc_min = np.array(pc_min,dtype=float)
+#     # pc_max = np.array(pc_max,dtype=float)
+#     # pc_min_vec = np.array(pc_min_vec,dtype=float)
+#     # pc_max_vec = np.array(pc_max_vec,dtype=float)
+#     return x
+#     # return H, K, pc_min, pc_max, pc_min_vec, pc_max_vec
+
+def tangential_relaxation(
+        vertices: npt.ArrayLike,
+        faces: npt.ArrayLike,
+        constrained_vertices: Union[npt.ArrayLike, None] = None,
+        n_iter: int = 1,
+    ) -> npt.NDArray:
+    """Tangential relaxation of vertices.
+
+    Parameters
+    ----------
+
+    Returns
+    -------
+    The smoothed vertices.
+
+    References
+    ----------
+    https://doc.cgal.org/latest/Polygon_mesh_processing/
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#ga57fa999abe8dc557003482444df2a189
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices or [], dtype=np.int32)
+    cdef vector[vector[float]] v
+
+    v = pmp_tangential_relaxation(cpp_v, cpp_f, cpp_constrained_vertices, n_iter)
 
     return np.array(v, dtype=float)
 
@@ -318,7 +382,7 @@ def isotropic_remeshing(
         vertices: npt.ArrayLike,
         faces: npt.ArrayLike,
         target_edge_length: float,
-        n_iterations: int = 1,
+        n_iter: int = 1,
     ):
     """Isotropic surface remeshing. Remeshing is achieved by a combination of
     edge splits/flips/collapses, tangential relaxation, and projection back
@@ -331,7 +395,7 @@ def isotropic_remeshing(
     target_edge_length: float
         The target edge length for the isotropic remesher. This defines the
         resolution of the resulting surface.
-    n_iterations: int
+    n_iter: int
         Number of iterations of the above-mentioned atomic operations.
 
     Returns
@@ -352,7 +416,7 @@ def isotropic_remeshing(
     cdef pair[vector[vector[float]], vector[vector[int]]] out
 
     out = pmp_isotropic_remeshing(
-        cpp_v, cpp_f, target_edge_length, n_iterations
+        cpp_v, cpp_f, target_edge_length, n_iter
     )
     v = np.array(out.first, dtype=float)
     f = np.array(out.second, dtype=int)

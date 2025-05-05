@@ -1,3 +1,5 @@
+from collections import namedtuple
+
 import numpy as np
 import numpy.typing as npt
 
@@ -17,10 +19,9 @@ class Hemisphere:
         self,
         white: Surface,
         pial: Surface,
-        inf = None,
+        inf=None,
         spherical_registration: None | SphericalRegistration = None,
     ) -> None:
-
         self.white = white
         self.pial = pial
         self.inf = inf
@@ -38,13 +39,12 @@ class Hemisphere:
         vo = self.pial.vertices
         return np.linalg.norm(vo - vi, axis=1)
 
-
     def compute_average_curvature(
-            self,
-            white_curv: None | Curvature = None,
-            pial_curv: None | Curvature = None,
-            curv_kwargs: None | dict = None,
-        ):
+        self,
+        white_curv: None | Curvature = None,
+        pial_curv: None | Curvature = None,
+        curv_kwargs: None | dict = None,
+    ):
         """Average curvature estimates of white and pial surfaces."""
         curv_kwargs = curv_kwargs or {}
         white_curv = white_curv or self.white.compute_curvature(**curv_kwargs)
@@ -166,12 +166,13 @@ class Hemisphere:
         return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
 
     def estimate_layers(
-            self,
-            thickness: npt.NDArray,
-            curv: None | npt.NDArray = None,
-            frac: float | npt.NDArray = 0.5,
-            method: str = "equivolume",
-        ):
+        self,
+        method: str = "equivolume",
+        frac: float | npt.NDArray = 0.5,
+        thickness: npt.NDArray | None = None,
+        curv: str | npt.NDArray = "H",
+        curv_kwargs: dict | None = None,
+    ):
         """Estimate layers at `frac`. Given an estimate of the thickness at
         each vertex (and, for the equivolume model a curvature estimate),
         return the positions of one or more layers defined by the fraction in
@@ -182,18 +183,21 @@ class Hemisphere:
 
         Parameters
         ----------
-        thickness :
-            The thickness at each (white, pial) vertex pairs.
-        curv :
-            Curvature estimate at each (white, pial) vertex pairs.
+        method : str
+            The layer placement method to use. This determines how `frac` is to
+            be interpreted.
         frac : float | NDArray
             The fraction(s) in between white and pial surfaces at which to
             estimate layer(s). When `method` is equidistance, `frac` is a
             distance fraction. When `method` is equivolume, `frac` is a volume
             fraction.
-        method : str
-            The layer placement method to use. This determines how `frac` is to
-            be interpreted.
+        thickness :
+            The thickness at each (white, pial) vertex pairs. If None, it will
+            be estimated.
+        curv :
+            Curvature estimate at each (white, pial) vertex pairs. If a string,
+            it should be an attribute of cortech.constants.Curvature. By
+            default, the mean curvature is estimated and used.
 
         Returns
         -------
@@ -204,7 +208,16 @@ class Hemisphere:
         if method in {"equidistance", "equivolume"}:
             match method:
                 case "equivolume":
-                    assert curv is not None, "Curvature must be provided when using the equivolume method."
+                    if thickness is None:
+                        thickness = self.compute_thickness()
+                    match curv:
+                        case str():
+                            curv = getattr(
+                                self.compute_average_curvature(curv_kwargs=curv_kwargs),
+                                curv,
+                            )
+                        case _:
+                            curv = np.asarray(curv)
                     frac = self.compute_equivolume_fraction(thickness, curv, frac)
                 case "equidistance":
                     pass
@@ -220,6 +233,7 @@ class Hemisphere:
         white="white",
         pial="pial",
         inf=None,
+        sphere="sphere",
         spherical_registration="sphere.reg",
         # thickness="thickness",
         # curv="avg_curv",
@@ -241,9 +255,59 @@ class Hemisphere:
 
 class Cortex:
     def __init__(self, lh: Hemisphere, rh: Hemisphere) -> None:
+        """
+        An iterator over hemisphere objects.
+
+        Parameters
+        ----------
+        lh, rh : Hemisphere
+            _description_
+        """
         self.lh = lh
         self.rh = rh
+        self.hemispheres = [self.lh, self.rh]
 
-    def estimate_layers(self, frac):
-        self.lh.estimate_layers(frac)
-        self.rh.estimate_layers(frac)
+    def __len__(self):
+        return len(self.hemispheres)
+
+    def __getitem__(self, index):
+        return self.hemispheres[index]
+
+    @staticmethod
+    def iterate_over_hemispheres(method):
+        def wrapper(self, *args, **kwargs):
+            t = namedtuple(f"{method.__name__}_result", ("lh", "rh"))
+            return t(*[getattr(i, method.__name__)(*args, **kwargs) for i in self])
+
+        return wrapper
+
+    @iterate_over_hemispheres
+    def compute_average_curvature(self):
+        pass
+
+    @iterate_over_hemispheres
+    def compute_thickness(self):
+        pass
+
+    @iterate_over_hemispheres
+    def compute_equivolume_fraction(self):
+        pass
+
+    @iterate_over_hemispheres
+    def estimate_layers(self):
+        pass
+
+    @iterate_over_hemispheres
+    def has_spherical_registration(self):
+        pass
+
+    @classmethod
+    def from_freesurfer_subject_dir(cls, sub_dir, *args, **kwargs):
+        return cls(
+            Hemisphere.from_freesurfer_subject_dir(sub_dir, "lh", *args, **kwargs),
+            Hemisphere.from_freesurfer_subject_dir(sub_dir, "rh", *args, **kwargs),
+        )
+
+    def __str__(self):
+        s = "\n".join(f"{h} : {i}" for h, i in zip(("lh", "rh"), self))
+        return s

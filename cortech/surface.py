@@ -597,7 +597,7 @@ class Surface:
         )
 
     def smooth_angle_and_area(self, inplace: bool = False, **kwargs):
-        v = pmp.angle_and_area_smoothing(self.vertices, self.faces, **kwargs)
+        v = pmp.smooth_angle_and_area(self.vertices, self.faces, **kwargs)
         if inplace:
             self.vertices = v
         return v
@@ -666,8 +666,8 @@ class Surface:
     def smooth_shape(
         self,
         constrained_vertices: npt.NDArray | None = None,
-        time: float = 0.01,
-        n_iter: int = 10,
+        time: float = 0.1,
+        n_iter: int = 1,
         inplace: bool = False,
     ):
         """Perform shape smoothing via mean curvature flow (preserving vertex
@@ -692,6 +692,36 @@ class Surface:
         if inplace:
             self.vertices = v
         return v
+
+    def tangential_relaxation(
+        self,
+        constrained_vertices: npt.NDArray | None = None,
+        n_iter: int = 1,
+        inplace: bool = False,
+    ):
+        """Perform shape smoothing via mean curvature flow (preserving vertex
+        density).
+
+        Parameters
+        ----------
+        constrained_vertices:
+            Indices of vertices to fix (smoothing will not be applied to these
+            vertices).
+        time
+        n_iter
+        inplace : bool
+
+        References
+        ----------
+        https://doc.cgal.org/latest/Polygon_mesh_processing/index.html
+        """
+        v = pmp.tangential_relaxation(
+            self.vertices, self.faces, constrained_vertices, n_iter
+        )
+        if inplace:
+            self.vertices = v
+        return v
+
 
     def smooth_taubin(
         self,
