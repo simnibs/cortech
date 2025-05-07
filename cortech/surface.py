@@ -14,6 +14,7 @@ import cortech.cgal.polygon_mesh_processing as pmp
 import cortech.cgal.convex_hull_3
 from cortech.constants import Curvature
 
+
 class Surface:
     def __init__(
         self,
@@ -722,7 +723,6 @@ class Surface:
             self.vertices = v
         return v
 
-
     def smooth_taubin(
         self,
         arr: npt.NDArray | None = None,
@@ -1040,6 +1040,7 @@ class Surface:
     def plot(self, scalars=None, mesh_kwargs=None, plotter_kwargs=None):
         # only works when pyvista is installed
         from cortech.visualization import plot_surface
+
         plot_surface(
             self, scalars, mesh_kwargs=mesh_kwargs, plotter_kwargs=plotter_kwargs
         )
@@ -1097,63 +1098,76 @@ class SphericalRegistration(Surface):
 
     def compute_projection(
         self,
-        other: "SphericalRegistration",
+        target: "SphericalRegistration",
         method: str = "linear",
-        n_nearest_vertices: int = 3,
+        n_nearest_vertices: int = 5,
     ):
-        """Project the vertices of the (registered) spherical represention of
-        self onto other. That is, compute a mapping from surfaces in self to
-        other.
+        """Compute a mapping from `self` to `target` that can be used to map
+        vertex data from `self` to the vertices of `target`. The mapping is
+        estimated by projecting the vertices of `target` onto the surface of
+        `self`.
 
-        Create a morph map which allows morphing of values from the nodes in
-        `surf_from` to `surf_to` by nearest neighbor or linear interpolation.
+        The projection matrix is a sparse matrix with dimensions
+        (target.n_vertices, self.n_vertices) where each row has exactly one
+        (nearest) or three (linear) entries that sum to one.
 
-        A morph map is a sparse matrix with
-        dimensions (n_points_surf_to, n_points_surf_from) where each row has
-        exactly three entries that sum to one. It is created by projecting each
-        point in `surf_to` onto closest triangle in `surf_from` and determining
-        the barycentric coordinates.
 
-        Testing all points against all triangles is expensive and inefficient,
-        thus we compute an approximation by finding, for each point in
-        `surf_to`, the `self.n` nearest nodes on `surf_from` and the triangles
-        to which these points belong. We then test only against these triangles.
-
-                PARAMETERS
+        PARAMETERS
         ----------
         self :
             The source mesh (i.e., the mesh to interpolate *from*).
-        other :
+        target :
             The target mesh (i.e., the mesh to interpolate *to*).
-
+        n_nearest_vertices: int
+            When using linear interpolation, we need to identify the triangle
+            to which each vertex in `target` projects. Testing all target
+            vertices against all triangles in `self` is expensive and
+            inefficient, thus we compute an approximation by finding, for each
+            vertex in `target`, the `n_nearest_vertices` closest vertices in
+            `self`. We find the triangles to which these points belong and then
+            test only against these triangles.
         """
         match method:
             case "nearest":
                 kdtree = scipy.spatial.cKDTree(self.vertices)
-                cols = kdtree.query(other.vertices)[1]
-                rows = np.arange(other.n_vertices)
-                weights = np.ones(other.n_vertices)
+                cols = kdtree.query(target.vertices)[1]
+                rows = np.arange(target.n_vertices)
+                weights = np.ones(target.n_vertices)
 
             case "linear":
-                # Find the triangle (on `self`) to which each vertex in `other`
+                # Find the triangles (in `self`) to which each vertex in `other`
                 # projects and get the associated weights
                 points_to_faces = self.get_nearest_triangles_on_surface(
-                    other.vertices, n_nearest_vertices
+                    target.vertices, n_nearest_vertices
                 )
                 tris, weights, _, _ = self.project_points_to_surface(
-                    other.vertices,
+                    target.vertices,
                     points_to_faces,
                 )
-                rows = np.repeat(np.arange(other.n_vertices), other.n_dim)
+                rows = np.repeat(np.arange(target.n_vertices), target.n_dim)
                 cols = self.faces[tris].ravel()
                 weights = weights.ravel()
             case _:
-                raise ValueError("Invalid mapping `method`.")
+                raise ValueError(f"Invalid mapping method (got {method}).")
 
         self._mapping_matrix = scipy.sparse.csr_array(
-            (weights, (rows, cols)), shape=(other.n_vertices, self.n_vertices)
+            (weights, (rows, cols)), shape=(target.n_vertices, self.n_vertices)
         )
         self._mapping_matrix.sum_duplicates()
 
     def resample(self, values: npt.NDArray):
+        """Pull values defined on `self` to the vertices of the target surface
+        used as input to `compute_projection`.
+
+        Parameters
+        ----------
+        values : npt.NDArray
+            Data to map to the target surface. The shape is (self.n_vertices, ...)
+
+        Returns
+        -------
+        mapped values: npt.NDArray
+            Data mapped onto the target surface. The shape is (target.n_vertices, ...)
+        """
+
         return self._mapping_matrix @ values
