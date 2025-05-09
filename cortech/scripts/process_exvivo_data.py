@@ -300,7 +300,7 @@ def _sweep_isovolume_and_isodistance_fractions(surf: Hemisphere, outpath_sub: os
         df.to_csv(outpath_sub_method / Path(surf_placement + "_errors.csv"))
 
 
-def _compute_surface_gradients(surf: Hemisphere, data: npt.NDArray[float]) -> None:
+def _compute_surface_gradients(surf: Hemisphere, data: npt.NDArray[float], neighborhood_size=1) -> None:
 
     """Fit a plane to each node (and its neighbors) to approximate the first order gradients.
     Basically for each node we are solving:
@@ -324,6 +324,8 @@ def _compute_surface_gradients(surf: Hemisphere, data: npt.NDArray[float]) -> No
        data: np.array(float)
                 Some data that lives on the nodes of the
                 surface of which gradient we are interested in.
+        neighborhood_size: int
+                Size of the neighborhood over which the gradient is computed.
     Returns:
        coeffs: np.array(float)
                 A nodes x 3 array that stores the first order
@@ -340,8 +342,8 @@ def _compute_surface_gradients(surf: Hemisphere, data: npt.NDArray[float]) -> No
     coeffs = np.zeros((surf.inf.n_vertices, num_params))
 
     # number of neighbors
-    adjacency_matrix = surf.inf.compute_vertex_adjacency()
-    m = np.array(adjacency_matrix.sum(1)).squeeze().astype(int)
+    knn, kr = surf.inf.k_ring_neighbors(neighborhood_size)
+    m = np.array([x.size for x in knn])
     muq = np.unique(m)
 
 
@@ -350,7 +352,9 @@ def _compute_surface_gradients(surf: Hemisphere, data: npt.NDArray[float]) -> No
     # same size at the same time.
     for mm in muq:
         i = np.where(m == mm)[0]
-        nid = adjacency_matrix[i].indices.reshape(-1, mm)
+
+        # Get the neighbor indices
+        nid = knn[i][kr[i,1]:kr[i,2]]
 
         # Get the coordinates of the neighbors in MRI space
         coords_neighbors = surf.inf.vertices[nid, ...]
@@ -613,12 +617,7 @@ def main(
                 h,
             )
 
-            # Compute the node-to-node thickness (distance), so we can compare the models fairly.
-            # This is mainly done so that the models can be easily fitted because the error will
-            # be computed as the distance between corresponding nodes (see below). Also the
-            # linear model will be later fitted with the node-to-node distance, although
-            # it could be also fitted with the FS way of computing distance. We just have not
-            # implemented that yet.
+            # Compute and save the thicknesses
             _compute_and_save_thickness(surf, outpath_sub, h)
 
             # Alright, grid search the iso-distance and -volume parameters so we can
