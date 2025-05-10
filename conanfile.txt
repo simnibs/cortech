@@ -1,6 +1,8 @@
 [requires]
 cgal/5.6.1
-b2/[<5.3]
+
+[tool_requires]
+b2/5.2.1
 
 [generators]
 PkgConfigDeps
