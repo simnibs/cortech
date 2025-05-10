@@ -36,7 +36,7 @@ archs = ["native"]
 test-requires = "pytest"
 test-command = "pytest {package}/tests"
 
-[tool.cibuildwheel.darwin]
+[tool.cibuildwheel.macos]
 before-all = "pip install conan && conan config install conan_profile_darwin && conan install --build=missing --output-folder={package} ."
 
 
