@@ -1,9 +1,6 @@
 [requires]
 cgal/5.6.1
 
-[tool_requires]
-b2/5.2.1
-
 [generators]
 PkgConfigDeps
 MesonToolchain
