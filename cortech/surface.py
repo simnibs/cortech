@@ -765,8 +765,8 @@ class Surface:
             Array of arrays where pttris[i] are the neighboring triangles of the
             ith point.
         """
-        rows = self.faces.ravel()
-        cols = np.repeat(np.arange(self.n_faces), self.vertices_per_face)
+        rows = self.faces.ravel().astype('int32')
+        cols = np.repeat(np.arange(self.n_faces), self.vertices_per_face).astype('int32')
         data = np.ones_like(rows)
         csr = scipy.sparse.coo_matrix(
             (data, (rows, cols)), shape=(self.n_vertices, self.n_faces)
@@ -1082,7 +1082,7 @@ class Surface:
             v, f, metadata = nib.freesurfer.read_geometry(
                 surf_file, read_metadata=read_metadata
             )
-        return cls(v, f, metadata)
+        return cls(v, f, metadata=metadata)
 
 
 class SphericalRegistration(Surface):

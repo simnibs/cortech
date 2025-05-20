@@ -3,6 +3,7 @@ from collections import namedtuple
 import numpy as np
 import numpy.typing as npt
 import nibabel as nib
+from scipy.spatial import KDTree
 
 import cortech.utils
 from cortech.surface import Surface, SphericalRegistration
@@ -175,7 +176,7 @@ class Hemisphere:
 
         return dist_frac.squeeze()
 
-    def fit_infra_supra_border(self):
+    def fit_infra_supra_border(self, curv_args=None):
         """Fit the infra supra border using models fitted from ex-vivo data.
 
         Parameters
@@ -191,12 +192,13 @@ class Hemisphere:
             print('No model for the infra supra border loaded!')
             return
 
-        curv = self.compute_average_curvature()
-        thickness = self.compute_thickness()
 
+        thickness = self.compute_thickness()
+        curv = self.compute_average_curvature(curv_kwargs=curv_args)
         surfaces = {}
         
         for model in self.infra_supra_model:
+            print(f'Estimating surfaces using: {model}')
             if "equivolume" in model:
                 surfaces[model] = self.estimate_layers(method="equivolume", frac=self.infra_supra_model[model], thickness=thickness, curv=curv.H)
             elif "equidistance" in model:
@@ -235,7 +237,7 @@ class Hemisphere:
         return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
 
 
-    def _predict_linear_model(parameters: npt.NDArray, curv: Curvature, clip_range=(0.01, 99.9)):
+    def _predict_linear_model(self, parameters: npt.NDArray, curv: Curvature, clip_range=(0.01, 99.9)):
         """Predict the infra supra border using a linear model fitted on the ex-vivo data.
         NOTE: This a little suboptimal at the moment as the model is fixed, i.e., it needs
         [1, k1, k2, k1k2] whereas the parameters are passed in and are thus more general.
@@ -268,7 +270,7 @@ class Hemisphere:
         k1k2 = k1*k2
         dummy = np.ones_like(k1)
 
-        predictors = np.stack([dummy, k1, k2, k1k2])
+        predictors = np.stack([dummy, k1, k2, k1k2]).T
 
         frac = np.einsum("ij, ij -> i", predictors, parameters)
         frac = np.clip(frac, 0, 1)
@@ -361,8 +363,12 @@ class Hemisphere:
             spherical_registration = SphericalRegistration.from_freesurfer_subject_dir(
                 sub_dir, f"{hemi}.{spherical_registration}"
             )
+
+
+        infra_supra_model = {}
         if infra_supra_model_type_and_path is not None:
-            infra_supra_model = {}
+            fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", hemi)
+            fsavg.spherical_registration.compute_projection(spherical_registration)
             number_of_nodes = white.n_vertices
             for model_type in infra_supra_model_type_and_path.keys():
                 if "equivolume" in model_type or "equidistance" in model_type:
@@ -372,7 +378,7 @@ class Hemisphere:
                     elif "local" in model_type:
                         local_frac_im = nib.load(infra_supra_model_type_and_path[model_type])
                         local_frac_fsav = local_frac_im.get_fdata().squeeze()
-                        local_frac = spherical_registration.resample(local_frac_fsav)
+                        local_frac = fsavg.spherical_registration.resample(local_frac_fsav)
                         infra_supra_model[model_type] = local_frac
                 elif "linear" in model_type:
                     # NOTE: for the linear model the order matters! I'll keep it general now,
@@ -387,7 +393,7 @@ class Hemisphere:
                         parameters_fsav.append(param_tmp)
 
                     parameters_fsav = np.array(parameters_fsav).transpose()
-                    parameters = spherical_registration.resample(parameters_fsav)
+                    parameters = fsavg.spherical_registration.resample(parameters_fsav)
                     infra_supra_model[model_type] = parameters
 
             if not infra_supra_model:
