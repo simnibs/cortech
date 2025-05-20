@@ -1,25 +1,18 @@
 [project]
 name = "cortech"
 authors = [
-    {name = "Jesper Duemose Nielsen", email = "jesperdn@drcmr.dk" },
-    {name = "Oula Puonti", email = "oulap@drcmr.dk" },
+    { name = "Jesper Duemose Nielsen", email = "jesperdn@drcmr.dk" },
+    { name = "Oula Puonti", email = "oulap@drcmr.dk" },
 ]
-maintainers = [
-    {name = "Cortech developers"},
-]
-license = {text = "GPL3"}
+maintainers = [{ name = "Cortech developers" }]
+license = { text = "GPL3" }
 description = "Cortical layer placement and analysis"
 # long_description = file: README.md
 # long_description_content_type = text/markdown
 dynamic = ["version"]
 requires-python = ">=3.11"
 
-dependencies =[
-    "nibabel",
-    "numba",
-    "numpy",
-    "scipy",
-]
+dependencies = ["nibabel", "numba", "numpy", "scipy"]
 
 [project.optional-dependencies]
 vtk = ["pyvista"]
@@ -38,17 +31,25 @@ build = ["cp311-*", "cp312-*"]
 archs = ["native"]
 
 # Install conan, create default profile, install dependencies
-before-all = "pip install conan && conan profile detect && conan install --build=missing --output-folder={package} ."
+# before-all = "pip install conan && conan profile detect && conan install --build=missing --output-folder={package} ."
 
 test-requires = "pytest"
 test-command = "pytest {package}/tests"
 
+[tool.cibuildwheel.macos]
+before-all = "pip install conan && conan config install -tf profiles conan_profiles && conan install --profile:all darwin --build=missing --output-folder={package} ."
+
+
 [tool.cibuildwheel.linux]
+before-all = "pip install conan && conan config install -tf profiles conan_profiles && conan install --profile:all linux --build=missing --output-folder={package} ."
+
 # Only build manylinux wheels for linux
 manylinux-x86_64-image = "manylinux_2_28"
 skip = ["*musllinux*"]
 
 [tool.cibuildwheel.windows]
+before-all = "pip install conan && conan config install -tf profiles conan_profiles && conan install --profile:all windows --build=missing --output-folder={package} ."
+
 # cibuildwheel does not yet include delvewheel by default and thus does not
 # repair wheels on windows. Therefore, add this
 before-build = "pip install delvewheel"

@@ -10,6 +10,7 @@ def atleast_nd(arr, n):
     else:
         return atleast_nd(arr[..., None], n)
 
+
 def sliced_argmin(x: npt.NDArray, indptr: npt.NDArray):
     """Perform argmin on slices of x.
 
@@ -52,10 +53,26 @@ def normalize(arr: npt.NDArray, axis=None, inplace: bool = False):
         return np.divide(arr, size, where=size != 0)
 
 
-def compute_sphere_radius(frac: float | npt.NDArray, T: npt.NDArray, R: npt.NDArray, R3: None | npt.NDArray = None):
-    # if `frac` is an array (and not a float) broadcast against vertices
-    frac_nd = np.array(frac).squeeze()
-    frac_nd = frac_nd if frac_nd.ndim == 0 else frac_nd[:, None]
+def compute_sphere_radius(
+    frac: float | npt.NDArray,
+    T: npt.NDArray,
+    R: npt.NDArray,
+    R3: None | npt.NDArray = None,
+):
+    """
+
+    frac
+        If float, will be broadcast against all T/R. If array, the last
+        dimension should match the dimension of T/R.
+    T
+        Thickness
+    R
+        Radius
+    R3
+        Radius cubed.
+
+    """
+    frac_nd = np.array(frac)
     R3 = R**3 if R3 is None else R3
     return np.cbrt(frac_nd * ((R + T) ** 3 - R3) + R3)
 
@@ -93,7 +110,6 @@ def k_ring_neighbors(
     conn_indices: npt.NDArray,
     conn_indptr: npt.NDArray,
 ):
-
     n_out = indices.shape[0]
 
     is_visited = np.zeros(n, bool)

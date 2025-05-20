@@ -97,7 +97,7 @@ class Hemisphere:
         self,
         thickness: npt.NDArray,
         curv: npt.NDArray,
-        vol_frac: npt.NDArray | float = 0.5,
+        vol_frac: float | npt.NDArray = 0.5,
     ):
         """Compute the distance fraction (between inner and outer surface whose
         distance is `thickness`) which yields the desired volume fraction at each
@@ -109,8 +109,13 @@ class Hemisphere:
             Curvature estimate at each position.
         thickness : npt.NDArray
             Thickness estimate at each position.
-        vol_frac : float
-            The desired volume fraction. Defaults to 0.5.
+        vol_frac : float | npt.NDArray
+            The desired volume fraction(s). If a float, estimate a single
+            distance fraction per vertex. If an ndarray with one dimension,
+            assume that `vol_frac` gives a number of fractions to estimate for
+            each vertex. If an ndarray with two dimensions, assume that
+            `vol_frac` is (n_frac, n_vertices), i.e., the fraction is provided
+            explicitly for each vertex (default = 0.5).
 
         Returns
         -------
@@ -144,18 +149,31 @@ class Hemisphere:
         """
         frac = np.atleast_1d(vol_frac)
 
+        nv = len(thickness)
+
         # Name variables in accordance with the reference
         R = 1 / np.abs(curv)
         R3 = R**3
         T = thickness
-        r = np.zeros((len(frac), len(curv)))
+
+        match frac.ndim:
+            case 1:
+                # broadcast frac against vertices
+                r = np.zeros((len(frac), nv))
+                frac = np.broadcast_to(frac[:, None], r.shape)
+            case 2:
+                # assume frac is (n_frac, n_vertices)
+                assert frac.shape[-1] == nv
+                r = np.zeros(frac.shape)
 
         pos = curv > 0
         neg = curv < 0
 
-        r[:, neg] = cortech.utils.compute_sphere_radius(frac, T[neg], R[neg], R3[neg])
+        r[:, neg] = cortech.utils.compute_sphere_radius(
+            frac[:, neg], T[neg], R[neg], R3[neg]
+        )
         r[:, pos] = cortech.utils.compute_sphere_radius(
-            1 - frac, T[pos], R[pos], R3[pos]
+            1 - frac[:, pos], T[pos], R[pos], R3[pos]
         )
         # r[curv == 0] should be `frac` but we take care of this in `dist_frac` below
 

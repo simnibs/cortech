@@ -7,11 +7,11 @@ This package requires compiling some CGAL functions. You can install CGAL using 
 
 ### Using Conan
 
-First
+First (using linux as example)
 
     pip install conan
-    conan profile detect
-    conan install --build=missing --output-folder=$PWD/conan_deps .
+    conan config install -tf profiles conan_profiles
+    conan install --profile:all linux --build=missing --output-folder=$PWD/conan_deps .
 
 Then
 
