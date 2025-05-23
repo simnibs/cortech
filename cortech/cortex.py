@@ -218,6 +218,8 @@ class Hemisphere:
         for model in self.infra_supra_model:
             print(f'Estimating surfaces using: {model}')
             if "equivolume" in model:
+                if self.infra_supra_model[model].size > 1 and not self.infra_supra_model[model].shape[0]==1:
+                    self.infra_supra_model[model] = np.expand_dims(self.infra_supra_model[model], axis=0)
                 surfaces[model] = self.estimate_layers(method="equivolume", frac=self.infra_supra_model[model], thickness=thickness, curv=curv.H)
             elif "equidistance" in model:
                 surfaces[model] = self.estimate_layers(method="equidistance", frac=self.infra_supra_model[model])
@@ -281,11 +283,13 @@ class Hemisphere:
 
         k1 = np.clip(curv.k1, pk1[0], pk1[1]).T
         k2 = np.clip(curv.k2, pk2[0], pk2[1]).T
+        k1k2 = k1*k2
 
         k1 = k1 - k1.mean()
         k2 = k2 - k2.mean()
 
-        k1k2 = k1*k2
+        k1k2 = k1k2 - k1k2.mean()
+        
         dummy = np.ones_like(k1)
 
         predictors = np.stack([dummy, k1, k2, k1k2]).T

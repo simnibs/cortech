@@ -221,7 +221,7 @@ def _sweep_isovolume_and_isodistance_fractions(surf: Hemisphere, outpath_sub: os
     vol_fracs = np.linspace(min_frac, max_frac, n_steps)
     orig_inf_vertices = surf.inf.vertices
     thickness = surf.compute_thickness()
-    for surf_placement in ["equi-volume", "equi-distance"]:
+    for surf_placement in ["equivolume", "equidistance"]:
         outpath_sub_method = outpath_sub / surf_placement
 
         if outpath_sub_method.exists():
@@ -235,8 +235,9 @@ def _sweep_isovolume_and_isodistance_fractions(surf: Hemisphere, outpath_sub: os
         average_intensities = np.zeros((n_steps))
 
         for i, vol_frac in enumerate(vol_fracs):
-            v = surf.place_layers(
-                thickness, curv.H, vol_frac, method=surf_placement
+
+            v = surf.estimate_layers(
+                method=surf_placement, frac=vol_frac, thickness=thickness, curv=curv.H
             )
             surf.inf.vertices = v
 
@@ -354,7 +355,7 @@ def _compute_surface_gradients(surf: Hemisphere, data: npt.NDArray[float], neigh
         i = np.where(m == mm)[0]
 
         # Get the neighbor indices
-        nid = knn[i][kr[i,1]:kr[i,2]]
+        nid = np.array([knn[j][kr[j,1]:kr[j,2]] for j in i])
 
         # Get the coordinates of the neighbors in MRI space
         coords_neighbors = surf.inf.vertices[nid, ...]
@@ -463,7 +464,8 @@ def _compute_fsaverage_stats(outpath: os.PathLike) -> None:
     """
 
     # Get the subject names
-    sub_names = [sub.stem for sub in outpath.glob('*/')]
+    # sub_names = [sub.stem for sub in outpath.glob('*/')]
+    sub_names = ['I57', 'I62', 'HCPA1', 'I54', 'I48', 'I58', 'I61', 'I56', 'I52', 'I38', 'I59', 'I45', 'I64', 'KC001', 'I46']
 
     # Next grab all the files that have been mapped to fsaverage
     # while splitting the hemi part off
@@ -550,6 +552,9 @@ def main(
         sub_name = sub_path.stem
         print(f"Processing sub {sub_name}")
 
+        if 'fsaverage' in sub_name:
+            continue
+
         # Create an output folder, if one exits overwrite it
         outpath_sub = out_path / Path(sub_name)
 
@@ -573,9 +578,9 @@ def main(
             # Surfaces: wm, gm, inf-sup
             # Set up the surface
             surf = Hemisphere.from_freesurfer_subject_dir(sub_path, h, inf="inf", spherical_registration=sphere_reg_name)
-            surf.white.taubin_smooth(n_iter=smoothing_steps_surface, inplace=True)
-            surf.pial.taubin_smooth(n_iter=smoothing_steps_surface, inplace=True)
-            surf.inf.taubin_smooth(n_iter=smoothing_steps_surface, inplace=True)
+            surf.white.smooth_taubin(n_iter=smoothing_steps_surface, inplace=True)
+            surf.pial.smooth_taubin(n_iter=smoothing_steps_surface, inplace=True)
+            surf.inf.smooth_taubin(n_iter=smoothing_steps_surface, inplace=True)
 
             # Technically we wouldn't have to read this in every time but it's not that bad
             fsavg = surf.from_freesurfer_subject_dir("fsaverage", h)
@@ -634,15 +639,16 @@ def main(
 
 if __name__ == '__main__':
     smooth_steps_surf = 5
-    smooth_steps_curv = 0
+    smooth_steps_curv = 20
     stuff_to_map = ["thickness", "thickness.inf.pial", "thickness.wm.inf"]
     data_path = Path("/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/surface_reconstructions_with_retrained_multiresolution_unet_model/")
-    out_path = Path(f"/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa")
+    out_path = Path(f"/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_no_josa")
 
-    if out_path.exists():
-        shutil.rmtree(out_path)
+    # if out_path.exists():
+        # shutil.rmtree(out_path)
 
-    out_path.mkdir()
+    # out_path.mkdir()
 
-    main(data_path, out_path, stuff_to_map, smoothing_steps_surface = smooth_steps_surf, smoothing_steps_curvature = smooth_steps_curv, sphere_reg_name='josa.sphere.reg')
+    # main(data_path, out_path, stuff_to_map, smoothing_steps_surface = smooth_steps_surf, smoothing_steps_curvature = smooth_steps_curv, sphere_reg_name='sphere.reg')
+    #
     _compute_fsaverage_stats(out_path)

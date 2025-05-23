@@ -128,6 +128,7 @@ def _equivolume_fit_global(distance_error):
 
     # Take the average error over subjects
     av_error = np.mean(distance_error, -1)
+    min_index = np.argmin(av_error, -1)
 
     return min_index
 
@@ -326,6 +327,7 @@ def _prepare_data_for_linear_fit(
     # Create an array of the predictors with a dummy for the fraction
     predictors = [np.ones_like(target_fraction)]
     for key in measurement_dict:
+        print(key)
         # Skip the thickness values because we are predicting a fraction
         if "thickness" in key:
             continue
@@ -347,6 +349,7 @@ def _cv_linear_fit(
     outfiles: list[str],
     outpath: os.PathLike,
     fsav_path: str,
+    surf_path: str,
     number_of_nodes: int,
     knn: list[np.array(int)],
     sub_names: list[str],
@@ -370,8 +373,9 @@ def _cv_linear_fit(
     """
 
     num_subjects = predictors.shape[0]
+    number_of_nodes = predictors.shape[1]
     betas = []
-    pred_error = np.zeros((number_of_nodes, number_of_subjects))
+    pred_error = np.zeros((number_of_nodes, num_subjects))
     abs_error = []
     r2s = []
 
@@ -409,7 +413,7 @@ def _cv_linear_fit(
         )
         nib.save(
             overlay,
-            outpath / Path(f"{hemis[s]}.error.{sub}.linear_model.fsaverage.mgh"),
+            outpath / Path(f"lh.error.{sub}.linear_model.fsaverage.mgh"),
         )
 
         pred_error[:, s] = error_on_fsav.squeeze()
@@ -445,7 +449,7 @@ def _cv_linear_fit(
         b = beta[:, i]
         overlay = nib.freesurfer.mghformat.MGHImage(b.astype("float32"), np.eye(4))
         nib.save(overlay, outpath / Path(f"lh.{n}.linear_model.mgh"))
-        call = f"mris_apply_reg --src {str(outpath)}/lh.{n}.linear_model.mgh --trg {str(outpath)}/rh.{n}.linear_model.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
+        call = f"mris_apply_reg --src {outpath}/lh.{n}.linear_model.mgh --trg {outpath}/rh.{n}.linear_model.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
         os.system(call)
 
 
@@ -501,7 +505,9 @@ def _cv_equivol_fit(
 
         model_path = data_path / sub / "equi-volume"
         print(model_path)
-        hemi = [x.stem.split(".")[0] for x in model_path.glob("*.inf.equi-volume.0.8")][0]
+        hemi = [x.stem.split(".")[0] for x in model_path.glob("*.inf.equi-volume.0.8")][
+            0
+        ]
         hemis.append(hemi)
         glob_pattern = ".distance.error.infra.supra.*.equi-volume.fsaverage.mgh"
         if "rh" in hemi:
@@ -543,7 +549,7 @@ def _cv_equivol_fit(
             / Path(f"{hemis[s]}.error.{sub}.equivolume.neighbors.fsaverage.mgh"),
         )
 
-        pred_error[:, s] = error_on_fsav.squueze()
+        pred_error[:, s] = error_on_fsav.squeeze()
 
     abs_error = np.mean(np.abs(pred_error), axis=1)
 
@@ -585,7 +591,7 @@ def _cv_equivol_fit(
         )
         nib.save(
             overlay,
-            outpath / Path(f"{hemis[s]}.error.{sub}.equivolume.regions.fsaverage.mgh"),
+            outpath / Path(f"lh.error.{sub}.equivolume.regions.fsaverage.mgh"),
         )
 
         pred_error[:, s] = error_on_fsav.squeeze()
@@ -605,13 +611,13 @@ def _cv_equivol_fit(
         fracs[fractions.astype("int")].astype("float32"), np.eye(4)
     )
     nib.save(overlay, outpath / Path(f"lh.equivolume.neighbor.frac.mgh"))
-    call = f"mris_apply_reg --src {str(outpath)}/lh.equivolume.neighbor.frac.mgh --trg {str(outpath)}/rh.equivolume.neighbor.frac.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
+    call = f"mris_apply_reg --src {outpath}/lh.equivolume.neighbor.frac.mgh --trg {outpath}/rh.equivolume.neighbor.frac.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
     os.system(call)
 
     # Also fit the global equivol fraction
     pred_error_global = np.zeros((number_of_nodes, number_of_subjects))
     minimum_fraction_indices = np.zeros(number_of_subjects)
-    for s, sub in enumerate(number_of_subjects):
+    for s, sub in enumerate(sub_names):
         selector = [x for x in range(number_of_subjects) if x != s]
         isovol_training = isovol_errors[:, :, selector]
         average_error = np.mean(np.mean(isovol_training, axis=0), axis=-1)
@@ -637,7 +643,7 @@ def _cv_equivol_fit(
         )
         nib.save(
             overlay,
-            outpath / Path(f"{hemis[s]}.error.{sub}.equivolume.global.fsaverage.mgh"),
+            outpath / Path(f"lh.error.{sub}.equivolume.global.fsaverage.mgh"),
         )
 
         pred_error_global[:, s] = error_on_fsav.squeeze()
@@ -676,7 +682,7 @@ def _predict_on_sub(
     method,
     hemi,
     fsavpath,
-    sphere_reg_name="josa.sphere.reg",
+    sphere_reg_name="sphere.reg",
     smooth_steps_surf=5,
     smooth_steps_curv=0,
 ):
@@ -717,20 +723,39 @@ def _predict_on_sub(
             with tempfile.TemporaryDirectory() as tmpdirname:
                 tmpdir = Path(tmpdirname)
                 print(f"Mapping fracs to the right hemisphere for subject {sub}")
-                # Write a temporary fracs file on disK
-                overlay = nib.freesurfer.mghformat.MGHImage(
-                    fracs_tmp.astype("float32"), np.eye(4)
-                )
-                nib.save(overlay, tmpdir / "fracs_tmp.mgh")
-                call = f"mris_apply_reg --src {tmpdirname}/fracs_tmp.mgh --trg {tmpdirname}/lh-on-rh.fracs_tmp.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
-                os.system(call)
-                # Read the mapped values
-                fracs_on_rh = (
-                    nib.load(tmpdir / "lh-on-rh.fracs_tmp.mgh").get_fdata().squeeze()
-                )
+                # Write a temporary fracs file on disk
+                # If we have multiple channels, loop over them
+                if fracs_tmp.ndim > 1 and fracs_tmp.shape[1] > 1:
+                    fracs_on_rh = np.zeros_like(fracs_tmp)
+                    for c in range(fracs_tmp.shape[1]):
+                        overlay = nib.freesurfer.mghformat.MGHImage(
+                            fracs_tmp[:, c].astype("float32"), np.eye(4)
+                        )
+                        nib.save(overlay, tmpdir / "fracs_tmp.mgh")
+                        call = f"mris_apply_reg --src {tmpdirname}/fracs_tmp.mgh --trg {tmpdirname}/lh-on-rh.fracs_tmp.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
+                        os.system(call)
+                        # Read the mapped values
+                        fracs_on_rh[:, c] = (
+                            nib.load(tmpdir / "lh-on-rh.fracs_tmp.mgh")
+                            .get_fdata()
+                            .squeeze()
+                        )
+                else:
+                    overlay = nib.freesurfer.mghformat.MGHImage(
+                        fracs_tmp.astype("float32"), np.eye(4)
+                    )
+                    nib.save(overlay, tmpdir / "fracs_tmp.mgh")
+                    call = f"mris_apply_reg --src {tmpdirname}/fracs_tmp.mgh --trg {tmpdirname}/lh-on-rh.fracs_tmp.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
+                    os.system(call)
+                    # Read the mapped values
+                    fracs_on_rh = (
+                        nib.load(tmpdir / "lh-on-rh.fracs_tmp.mgh")
+                        .get_fdata()
+                        .squeeze()
+                    )
+
                 # Next map it to the subject
                 fracs_on_rh_sub = fsavg.spherical_registration.resample(fracs_on_rh)
-                breakpoint()
                 # Set the prediction up
                 tmp_dict = {}
                 tmp_dict[method] = fracs_on_rh_sub
@@ -981,7 +1006,7 @@ def _cv_equidist_fit(
     )
     nib.save(overlay, outpath / Path(f"lh.equidistance.neighbor.frac.mgh"))
     # Map it to rh
-    call = f"mris_apply_reg --src {str(outpath)}/lh.equidistance.neighbor.frac.mgh --trg {str(outpath)}/rh.equidistance.neighbor.frac.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
+    call = f"mris_apply_reg --src {outpath}/lh.equidistance.neighbor.frac.mgh --trg {outpath}/rh.equidistance.neighbor.frac.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
     os.system(call)
 
     # Also fit the global equidist fraction
@@ -1100,41 +1125,50 @@ def main(
 
     # Run leave-one-out cross-validation for linear model
 
-    # out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
-    # outpath = data_path / f"linear_model_neighborhood_size_{neighborhood_size}"
+    out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
+    outpath = data_path / f"linear_model_NEW_NO_JOSA"
 
-    # _cv_linear_fit(
-    # predictors,
-    # target_values,
-    # inf_thickness,
-    # thickness,
-    # out_files,
-    # outpath,
-    # fsav_path,
-    # number_of_nodes,
-    # knn,
-    # sub_names,
-    # hemis
-    # )
+    _cv_linear_fit(
+        predictors,
+        target_values,
+        inf_thickness,
+        thickness,
+        out_files,
+        outpath,
+        fsav_path,
+        fs_run_path,
+        number_of_nodes,
+        knn,
+        sub_names,
+        hemis,
+    )
 
-    # Next cross-validate the isovolume values
-    outpath = data_path / "equivolume_model_test"
+    # # Next cross-validate the isovolume values
+    outpath = data_path / "equivolume_model_NEW_NO_JOSA"
     number_of_subjects = predictors.shape[0]
 
-    _cv_equivol_fit(data_path, outpath, fs_run_path, number_of_nodes, number_of_subjects, knn, fsav_path)
+    _cv_equivol_fit(
+        data_path,
+        outpath,
+        fs_run_path,
+        number_of_nodes,
+        number_of_subjects,
+        knn,
+        fsav_path,
+    )
 
     # Next cross-validate the isodistance values
-    # outpath = data_path / "equidistance_model_test"
-    # number_of_subjects = predictors.shape[0]
-    # _cv_equidist_fit(
-    #     data_path,
-    #     outpath,
-    #     fs_run_path,
-    #     fsav_path,
-    #     number_of_nodes,
-    #     number_of_subjects,
-    #     knn,
-    # )
+    outpath = data_path / "equidistance_model_NEW_NO_JOSA"
+    number_of_subjects = predictors.shape[0]
+    _cv_equidist_fit(
+        data_path,
+        outpath,
+        fs_run_path,
+        fsav_path,
+        number_of_nodes,
+        number_of_subjects,
+        knn,
+    )
 
 
 def _map_rh_to_lh(surf_data_path: os.PathLike, fsav_path: os.PathLike):
