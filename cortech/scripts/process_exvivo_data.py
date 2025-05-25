@@ -9,6 +9,7 @@ from scipy.spatial import KDTree
 from pathlib import Path
 from typing import Union
 import pandas as pd
+import tempfile
 
 
 def _compute_fs_style_thickness(coord1: npt.NDArray[float], coord2: npt.NDArray[float]) -> npt.NDArray[float]:
@@ -182,7 +183,7 @@ def _compute_and_save_thickness(
     thickness_sup_node_to_node = _compute_fs_style_thickness(v_inf, v_pial)
     thk_cortech = {
         "thickness_cortex": thickness_cortex_node_to_node,
-        "thicnkess_inf": thickness_inf_node_to_node,
+        "thickness_inf": thickness_inf_node_to_node,
         "thickness_sup": thickness_sup_node_to_node,
     }
     for t in thk_cortech.keys():
@@ -451,6 +452,28 @@ def _compute_gradients_on_surface(surf: Hemisphere, outpath_sub: os.PathLike, su
             coeff_on_fsaverage = surf.spherical_registration.resample(coeff)
             _save_overlay(coeff_on_fsaverage, outpath_sub / f"{hemi}.{stuff}.gradient.{c}.fsaverage.mgh")
 
+def _map_rh_to_lh(file_name):
+    
+    fs_home = Path(os.environ["FREESURFER_HOME"])
+    if not fs_home.exists():
+        raise Exception("FREESURFER_HOME not set")
+
+    fsav_path = fs_home / "subjects" / "fsaverage"
+
+    tmp_path_file = Path(file_name)
+    with tempfile.TemporaryDirectory() as tmpdirname:
+        tmpdir = Path(tmpdirname)
+        print(f"Mapping {tmp_path_file.stem} to the left hemisphere for subject {tmp_path_file.parent.stem}")
+        call = f"mris_apply_reg --src {file_name} --trg {tmpdirname}/rh-on-lh.fracs_tmp.mgh --streg {fsav_path}/xhemi/surf/lh.fsaverage_sym.sphere.reg {fsav_path}/surf/lh.fsaverage_sym.sphere.reg"
+        os.system(call)
+        # Read the mapped values
+        fracs_on_lh = (
+            nib.load(tmpdir / "rh-on-lh.fracs_tmp.mgh")
+            .get_fdata()
+            .squeeze()
+        )
+
+    return fracs_on_lh
 
 def _compute_fsaverage_stats(outpath: os.PathLike) -> None:
     """This function maps node-to-node distance between the wm and infra-supra, infra-supra and pial, and wm and pial to the fsaverage.
@@ -480,6 +503,7 @@ def _compute_fsaverage_stats(outpath: os.PathLike) -> None:
     # Okay we need to collect stats for all the files in the list for every subject, but split between hemis
     # Let's make a big list of lists because I don't know how many hemis we have a priori
     hemi_stats = {'lh': [[] for i in range(len(file_names))], 'rh': [[] for i in range(len(file_names))]}
+    lh_stats = [[] for i in range(len(file_names))]
 
     for sub in sub_names:
         # Check hemi
@@ -494,10 +518,21 @@ def _compute_fsaverage_stats(outpath: os.PathLike) -> None:
             data = nib.load(fname).get_fdata().squeeze()
             hemi_stats[hemi][index].append(data)
 
+            if 'rh' in hemi:
+                mapped_to_lh = _map_rh_to_lh(fname)
+                lh_stats[index].append(mapped_to_lh)
+            else:
+                lh_stats[index].append(data)
+
 
     # Compute the stats
     for i, name in enumerate(file_names):
         name_stub = name.split('.mgh')[0]
+        lh_vals = np.array(lh_stats[i]).T
+        lh_mean = lh_vals.mean(axis=1)
+        lh_std = lh_vals.std(axis=1)
+        _save_overlay(lh_mean, outpath / f"all.subs.on.lh.{name_stub}.mean.mgh")
+        _save_overlay(lh_std, outpath / f"all.subs.on.lh.{name_stub}.std.mgh")
         for hemi in ['lh', 'rh']:
             vals = np.array(hemi_stats[hemi][i]).T
             mean = vals.mean(axis=1)
@@ -639,16 +674,16 @@ def main(
 
 if __name__ == '__main__':
     smooth_steps_surf = 5
-    smooth_steps_curv = 20
+    smooth_steps_curv = 0
     stuff_to_map = ["thickness", "thickness.inf.pial", "thickness.wm.inf"]
     data_path = Path("/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/surface_reconstructions_with_retrained_multiresolution_unet_model/")
-    out_path = Path(f"/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_no_josa")
+    out_path = Path(f"/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa")
 
-    # if out_path.exists():
-        # shutil.rmtree(out_path)
+    if out_path.exists():
+        shutil.rmtree(out_path)
 
-    # out_path.mkdir()
+    out_path.mkdir()
 
-    # main(data_path, out_path, stuff_to_map, smoothing_steps_surface = smooth_steps_surf, smoothing_steps_curvature = smooth_steps_curv, sphere_reg_name='sphere.reg')
+    main(data_path, out_path, stuff_to_map, smoothing_steps_surface = smooth_steps_surf, smoothing_steps_curvature = smooth_steps_curv, sphere_reg_name='josa.sphere.reg')
     #
     _compute_fsaverage_stats(out_path)

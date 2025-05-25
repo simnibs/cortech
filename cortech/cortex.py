@@ -283,13 +283,10 @@ class Hemisphere:
 
         k1 = np.clip(curv.k1, pk1[0], pk1[1]).T
         k2 = np.clip(curv.k2, pk2[0], pk2[1]).T
-        k1k2 = k1*k2
-
         k1 = k1 - k1.mean()
         k2 = k2 - k2.mean()
+        k1k2 = k1*k2
 
-        k1k2 = k1k2 - k1k2.mean()
-        
         dummy = np.ones_like(k1)
 
         predictors = np.stack([dummy, k1, k2, k1k2]).T

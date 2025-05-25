@@ -170,12 +170,15 @@ def _linear_fit_neighborhood(
     betas = np.zeros((number_of_nodes, num_predictors))
     predicted_values = np.zeros((number_of_nodes, 1))
 
+    #Move the nodes to first dim
+    training_predictors = training_predictors.swapaxes(0,1)
+    training_values = training_values.swapaxes(0,1)
+
     for mm in muq:
         i = np.where(m == mm)[0]
         nid = np.array([knn[j] for j in i])
         # Grab the values from the neighbors
-
-        predictors_tmp = training_predictors[:, nid, :]
+        predictors_tmp = training_predictors[nid,...]
 
         # Reshape so that it's nodes x ngbrs x predictors
         predictors_tmp = predictors_tmp.reshape((nid.shape[0], -1, num_predictors))
@@ -184,7 +187,7 @@ def _linear_fit_neighborhood(
         U, S, Vt = np.linalg.svd(predictors_tmp, full_matrices=False)
 
         # Get the target values at the nodes we are dealing with
-        target_values_tmp = training_values[..., nid].reshape((nid.shape[0], -1))
+        target_values_tmp = training_values[nid,...].reshape((nid.shape[0], -1))
 
         betas_tmp = np.squeeze(
             Vt.swapaxes(1, 2)
@@ -257,6 +260,7 @@ def _prepare_data_for_linear_fit(
     measurement_dict = {key: [] for key in predictor_names}
     sub_names = []
     hemis = []
+    num_rh = 0
 
     for p in surface_data_path.glob("*/"):
         if not p.is_dir() or "model" in str(p) or "plot" in str(p):
@@ -300,6 +304,7 @@ def _prepare_data_for_linear_fit(
     target_fraction = np.clip(target_fraction, 0, 1).T
 
     gaussian_curv = np.ones_like(target_fraction)
+
     # Clip the precictors and compute gaussian curvature
     for key in measurement_dict:
         measure_tmp = measurement_dict[key]
@@ -309,18 +314,18 @@ def _prepare_data_for_linear_fit(
             measure_tmp[s, :] = np.clip(measure_tmp[s, :], perc[0], perc[1])
 
         measurement_dict[key] = measure_tmp.T
-        if "k1" in key or "k2" in key:
-            gaussian_curv = gaussian_curv * measurement_dict[key]
+        # if "k1" in key or "k2" in key:
+        #     gaussian_curv = gaussian_curv * measurement_dict[key]
 
-    # Add gaussian curvature into the dict
-    measurement_dict["k1k2.fsaverage"] = gaussian_curv
 
     # Center the predictors
     for key in measurement_dict:
         measure_tmp = measurement_dict[key]
-        measure_tmp = measure_tmp - measure_tmp.mean(axis=1)[:, None]
+        measure_tmp = measure_tmp - measure_tmp.mean(axis=0)[None,:]
         measurement_dict[key] = measure_tmp
 
+    # Add gaussian curvature into the dict
+    measurement_dict["k1k2.avg.fsaverage"] = measurement_dict['k1.avg.fsaverage'] * measurement_dict['k2.avg.fsaverage']
     # thicknesses = thicknesses.T
     target_values = target_fraction.T
 
@@ -375,10 +380,15 @@ def _cv_linear_fit(
     num_subjects = predictors.shape[0]
     number_of_nodes = predictors.shape[1]
     betas = []
-    pred_error = np.zeros((number_of_nodes, num_subjects))
     abs_error = []
     r2s = []
+    num_rh = 0
+    for h in hemis:
+        if 'rh' in h:
+            num_rh += 1
 
+    pred_error = np.zeros((number_of_nodes, num_subjects))
+    pred_error_only_fsav = np.zeros((number_of_nodes, num_subjects))
     if outpath.exists():
         shutil.rmtree(outpath)
 
@@ -404,6 +414,9 @@ def _cv_linear_fit(
             surf_path, sub, beta, "linear_model", hemis[s], fsav_path
         )
 
+        thickness_frac_on_fsav = np.einsum("ij, ij -> i", predictors[s,:,:], beta)
+        thickness_frac_on_fsav = np.clip(thickness_frac_on_fsav, 0, 1)
+        pred_error_only_fsav[:,s] = (inf_thickness[s,:] - thickness_frac_on_fsav * thickness[s,:]).squeeze()
         overlay = nib.freesurfer.mghformat.MGHImage(
             error_on_subject.astype("float32"), np.eye(4)
         )
@@ -418,6 +431,7 @@ def _cv_linear_fit(
 
         pred_error[:, s] = error_on_fsav.squeeze()
 
+
         # Save coeffs per subject
         for i, n in enumerate(outfiles):
             b = beta[:, i]
@@ -430,7 +444,10 @@ def _cv_linear_fit(
     #     target_thicknesses.T, predicted.T, multioutput="raw_values", force_finite=True
     # )
     abs_error = np.mean(np.abs(pred_error), axis=1)
+    abs_error_fsav = np.mean(np.abs(pred_error_only_fsav), axis=1)
 
+    overlay = nib.freesurfer.mghformat.MGHImage(abs_error_fsav.astype("float32"), np.eye(4))
+    nib.save(overlay, outpath / Path(f"lh.abs.average.error.ONLY.FSAV.linear_model.mgh"))
     # overlay = nib.freesurfer.mghformat.MGHImage(r2.astype("float32"), np.eye(4))
     # nib.save(overlay, outpath / Path(f"lh.r2.mgh"))
 
@@ -495,6 +512,7 @@ def _cv_equivol_fit(
     sub_id = 0
     sub_names = []
     hemis = []
+    num_rh = 0
     for p in data_path.glob("*/"):
         if not p.is_dir() or "model" in str(p) or "plot" in str(p):
             continue
@@ -512,6 +530,7 @@ def _cv_equivol_fit(
         glob_pattern = ".distance.error.infra.supra.*.equi-volume.fsaverage.mgh"
         if "rh" in hemi:
             glob_pattern = "to.lh.rh" + glob_pattern
+            num_rh += 1
         else:
             glob_pattern = "lh" + glob_pattern
 
@@ -549,7 +568,7 @@ def _cv_equivol_fit(
             / Path(f"{hemis[s]}.error.{sub}.equivolume.neighbors.fsaverage.mgh"),
         )
 
-        pred_error[:, s] = error_on_fsav.squeeze()
+        pred_error[:, num_lh] = error_on_fsav.squeeze()
 
     abs_error = np.mean(np.abs(pred_error), axis=1)
 
@@ -594,7 +613,7 @@ def _cv_equivol_fit(
             outpath / Path(f"lh.error.{sub}.equivolume.regions.fsaverage.mgh"),
         )
 
-        pred_error[:, s] = error_on_fsav.squeeze()
+        pred_error[:, num_lh] = error_on_fsav.squeeze()
 
     fractions_not_specified = pred_error == np.nan
     pred_error[fractions_not_specified] = 0
@@ -646,7 +665,8 @@ def _cv_equivol_fit(
             outpath / Path(f"lh.error.{sub}.equivolume.global.fsaverage.mgh"),
         )
 
-        pred_error_global[:, s] = error_on_fsav.squeeze()
+        pred_error_global[:, num_lh] = error_on_fsav.squeeze()
+
         minimum_fraction_indices[s] = fracs[minimum_fraction_index]
 
     abs_error = np.mean(np.abs(pred_error_global), axis=1)
@@ -887,6 +907,7 @@ def _cv_equidist_fit(
     sub_id = 0
     sub_names = []
     hemis = []
+    num_rh = 0
     for p in data_path.glob("*/"):
         if not p.is_dir() or "model" in str(p) or "plot" in str(p):
             continue
@@ -903,6 +924,7 @@ def _cv_equidist_fit(
         hemis.append(hemi)
         glob_pattern = ".distance.error.infra.supra.*.equi-distance.fsaverage.mgh"
         if "rh" in hemi:
+            num_rh += 1
             glob_pattern = "to.lh.rh" + glob_pattern
         else:
             glob_pattern = "lh" + glob_pattern
@@ -913,7 +935,6 @@ def _cv_equidist_fit(
         sub_id += 1
 
     pred_error = np.zeros((number_of_nodes, number_of_subjects))
-    pred_error_on_subject = np.zeros((number_of_nodes, number_of_subjects))
     for s, sub in enumerate(sub_names):
         selector = [x for x in range(len(sub_names)) if x != s]
         fractions = _equivolume_fit_smooth(
@@ -1042,6 +1063,7 @@ def _cv_equidist_fit(
         )
 
         pred_error_global[:, s] = error_on_fsav.squeeze()
+
         minimum_fraction_indices[s] = fracs[minimum_fraction_index]
 
     abs_error = np.mean(np.abs(pred_error_global), axis=1)
@@ -1126,7 +1148,8 @@ def main(
     # Run leave-one-out cross-validation for linear model
 
     out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
-    outpath = data_path / f"linear_model_NEW_NO_JOSA"
+    outpath = data_path / f"linear_model"
+
 
     _cv_linear_fit(
         predictors,
@@ -1144,7 +1167,7 @@ def main(
     )
 
     # # Next cross-validate the isovolume values
-    outpath = data_path / "equivolume_model_NEW_NO_JOSA"
+    outpath = data_path / "equivolume_model"
     number_of_subjects = predictors.shape[0]
 
     _cv_equivol_fit(
@@ -1157,8 +1180,8 @@ def main(
         fsav_path,
     )
 
-    # Next cross-validate the isodistance values
-    outpath = data_path / "equidistance_model_NEW_NO_JOSA"
+    # # Next cross-validate the isodistance values
+    outpath = data_path / "equidistance_model"
     number_of_subjects = predictors.shape[0]
     _cv_equidist_fit(
         data_path,
@@ -1219,8 +1242,13 @@ if __name__ == "__main__":
     surf_data_folder = Path(
         "/autofs/space/rauma_001/users/op035/data/exvivo/hires_surf/analysis/cortech_thicknesses/smooth_step_surf_5_smooth_steps_curv_0/"
     )
+
+    # surf_data_folder = Path(
+    #     "/autofs/space/rauma_001/users/op035/data/exvivo/hires_surf/analysis/output_smooth20/"
+    # )
+
     fs_run_folder = Path(
-        "/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/surface_reconstructions_with_initial_multiresolution_unet_model/"
+        "/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/surface_reconstructions_with_retrained_multiresolution_unet_model/"
     )
     # Could use some the thickness gradient as well?
     # predictor_names = ['thickness_cortex.fsaverage', 'k1.avg.fsaverage', 'k2.avg.fsaverage', 'thickness.gradient.magnitude.fsaverage']
@@ -1229,6 +1257,13 @@ if __name__ == "__main__":
         "k1.avg.fsaverage",
         "k2.avg.fsaverage",
     ]
+
+    # predictor_names = [
+    #     "thickness.fsaverage",
+    #     "k1.fsaverage",
+    #     "k2.fsaverage",
+    # ]
+   
     target_name = "thickness.wm.inf.fsaverage"
 
     main(
