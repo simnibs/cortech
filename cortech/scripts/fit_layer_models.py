@@ -81,6 +81,27 @@ def _equivolume_fit_smooth(distance_error, knn, number_of_nodes):
 
     return min_index
 
+def _equivolume_fit_node(distance_error, number_of_nodes):
+    """Find the equivolume fraction with the lowest error for each node (plus neighbors) for a given node
+
+    Args:
+       distance_error: np.array (number_of_nodes x num_isovol_fractions x num_subjects)
+       knn: list of np.array(int)
+            Lists the node indices of node i (the row index), including the node itself
+       number_of_nodes: int
+
+    Returns:
+        min_index: np.array (number_of_nodes x 1)
+
+    """
+    #
+
+    # Take the average error over subjects
+    av_error = np.mean(distance_error, -1)
+    min_indexes = np.argmin(av_error, -1)
+
+    return min_indexes
+
 
 def _equivolume_fit_per_region(
     distance_error, label_aparc, unique_labels, number_of_nodes
@@ -406,8 +427,8 @@ def _cv_linear_fit(
 
         else:
             beta = _linear_fit(
-                predictors[:, :, selector],
-                target_thicknesses[:, selector],
+                predictors[selector, :, :].swapaxes(0,-1),
+                target_thicknesses[selector, :].swapaxes(0,-1),
             )
 
         error_on_subject, error_on_fsav = _predict_on_sub(
@@ -521,13 +542,13 @@ def _cv_equivol_fit(
         print(sub)
         sub_names.append(sub)
 
-        model_path = data_path / sub / "equi-volume"
+        model_path = data_path / sub / "equivolume"
         print(model_path)
-        hemi = [x.stem.split(".")[0] for x in model_path.glob("*.inf.equi-volume.0.8")][
+        hemi = [x.stem.split(".")[0] for x in model_path.glob("*.inf.equivolume.0.8")][
             0
         ]
         hemis.append(hemi)
-        glob_pattern = ".distance.error.infra.supra.*.equi-volume.fsaverage.mgh"
+        glob_pattern = ".distance.error.infra.supra.*.equivolume.fsaverage.mgh"
         if "rh" in hemi:
             glob_pattern = "to.lh.rh" + glob_pattern
             num_rh += 1
@@ -568,13 +589,45 @@ def _cv_equivol_fit(
             / Path(f"{hemis[s]}.error.{sub}.equivolume.neighbors.fsaverage.mgh"),
         )
 
-        pred_error[:, num_lh] = error_on_fsav.squeeze()
+        pred_error[:, s] = error_on_fsav.squeeze()
 
     abs_error = np.mean(np.abs(pred_error), axis=1)
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
     nib.save(overlay, outpath / Path(f"lh.abs.average.error.equivolume.neighbors.mgh"))
 
+    pred_error = np.zeros((number_of_nodes, number_of_subjects))
+    for s, sub in enumerate(sub_names):
+        selector = [x for x in range(number_of_subjects) if x != s]
+        fractions = _equivolume_fit_node(
+            isovol_errors[:, :, selector], number_of_nodes
+        )
+
+        fracs_tmp = fracs[fractions.astype("int")].squeeze()
+        error_on_subject, error_on_fsav = _predict_on_sub(
+            surf_path, sub, fracs_tmp, "equivolume_local", hemis[s], fsav_path
+        )
+        overlay = nib.freesurfer.mghformat.MGHImage(
+            error_on_subject.astype("float32"), np.eye(4)
+        )
+        nib.save(
+            overlay, outpath / Path(f"{hemis[s]}.error.{sub}.equivolume.per.node.mgh")
+        )
+        overlay = nib.freesurfer.mghformat.MGHImage(
+            error_on_fsav.astype("float32"), np.eye(4)
+        )
+        nib.save(
+            overlay,
+            outpath
+            / Path(f"{hemis[s]}.error.{sub}.equivolume.neighbors.per.node.fsaverage.mgh"),
+        )
+
+        pred_error[:, s] = error_on_fsav.squeeze()
+
+    abs_error = np.mean(np.abs(pred_error), axis=1)
+
+    overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
+    nib.save(overlay, outpath / Path(f"lh.abs.average.error.equivolume.per.node.mgh"))
     # Fit regionally
     HOME = Path(os.environ["FREESURFER_HOME"])
     label_aparc, _, _ = nib.freesurfer.io.read_annot(
@@ -613,7 +666,7 @@ def _cv_equivol_fit(
             outpath / Path(f"lh.error.{sub}.equivolume.regions.fsaverage.mgh"),
         )
 
-        pred_error[:, num_lh] = error_on_fsav.squeeze()
+        pred_error[:, s] = error_on_fsav.squeeze()
 
     fractions_not_specified = pred_error == np.nan
     pred_error[fractions_not_specified] = 0
@@ -665,7 +718,7 @@ def _cv_equivol_fit(
             outpath / Path(f"lh.error.{sub}.equivolume.global.fsaverage.mgh"),
         )
 
-        pred_error_global[:, num_lh] = error_on_fsav.squeeze()
+        pred_error_global[:, s] = error_on_fsav.squeeze()
 
         minimum_fraction_indices[s] = fracs[minimum_fraction_index]
 
@@ -916,13 +969,13 @@ def _cv_equidist_fit(
         print(sub)
         sub_names.append(sub)
 
-        out_path = data_path / sub / "equi-distance"
+        out_path = data_path / sub / "equidistance"
 
-        hemi = [x.stem.split(".")[0] for x in out_path.glob("*.inf.equi-distance.0.8")][
+        hemi = [x.stem.split(".")[0] for x in out_path.glob("*.inf.equidistance.0.8")][
             0
         ]
         hemis.append(hemi)
-        glob_pattern = ".distance.error.infra.supra.*.equi-distance.fsaverage.mgh"
+        glob_pattern = ".distance.error.infra.supra.*.equidistance.fsaverage.mgh"
         if "rh" in hemi:
             num_rh += 1
             glob_pattern = "to.lh.rh" + glob_pattern
@@ -970,6 +1023,41 @@ def _cv_equidist_fit(
         overlay, outpath / Path(f"lh.abs.average.error.equidistance.neighbors.mgh")
     )
 
+    pred_error = np.zeros((number_of_nodes, number_of_subjects))
+    for s, sub in enumerate(sub_names):
+        selector = [x for x in range(len(sub_names)) if x != s]
+        fractions = _equivolume_fit_node(
+            isodist_errors[:, :, selector], number_of_nodes
+        )
+
+        fracs_tmp = fracs[fractions.astype("int")]
+        error_on_subject, error_on_fsav = _predict_on_sub(
+            surf_path, sub, fracs_tmp, "equidistance_local", hemis[s], fsav_path
+        )
+        overlay = nib.freesurfer.mghformat.MGHImage(
+            error_on_subject.astype("float32"), np.eye(4)
+        )
+        nib.save(
+            overlay,
+            outpath / Path(f"{hemis[s]}.error.{sub}.equidistance.per.node.mgh"),
+        )
+        overlay = nib.freesurfer.mghformat.MGHImage(
+            error_on_fsav.astype("float32"), np.eye(4)
+        )
+        nib.save(
+            overlay,
+            outpath
+            / Path(f"{hemis[s]}.error.{sub}.equidistance.neighbors.per.node.fsaverage.mgh"),
+        )
+
+        pred_error[:, s] = error_on_fsav.squeeze()
+
+    abs_error = np.mean(np.abs(pred_error), axis=1)
+
+    overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
+    nib.save(
+        overlay, outpath / Path(f"lh.abs.average.error.equidistance.per.node.mgh")
+    )
     # Fit regionally
     HOME = Path(os.environ["FREESURFER_HOME"])
     label_aparc, _, _ = nib.freesurfer.io.read_annot(
@@ -1147,27 +1235,27 @@ def main(
 
     # Run leave-one-out cross-validation for linear model
 
-    out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
-    outpath = data_path / f"linear_model"
+    # out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
+    # outpath = data_path / f"linear_model_nn_0"
 
 
-    _cv_linear_fit(
-        predictors,
-        target_values,
-        inf_thickness,
-        thickness,
-        out_files,
-        outpath,
-        fsav_path,
-        fs_run_path,
-        number_of_nodes,
-        knn,
-        sub_names,
-        hemis,
-    )
+    # _cv_linear_fit(
+    #     predictors,
+    #     target_values,
+    #     inf_thickness,
+    #     thickness,
+    #     out_files,
+    #     outpath,
+    #     fsav_path,
+    #     fs_run_path,
+    #     number_of_nodes,
+    #     knn,
+    #     sub_names,
+    #     hemis,
+    # )
 
     # # Next cross-validate the isovolume values
-    outpath = data_path / "equivolume_model"
+    outpath = data_path / "equivolume_model_nn_0"
     number_of_subjects = predictors.shape[0]
 
     _cv_equivol_fit(
@@ -1181,7 +1269,7 @@ def main(
     )
 
     # # Next cross-validate the isodistance values
-    outpath = data_path / "equidistance_model"
+    outpath = data_path / "equidistance_model_nn_0"
     number_of_subjects = predictors.shape[0]
     _cv_equidist_fit(
         data_path,
@@ -1240,7 +1328,7 @@ if __name__ == "__main__":
     fsav = Hemisphere.from_freesurfer_subject_dir(fsav_path, "lh")
 
     surf_data_folder = Path(
-        "/autofs/space/rauma_001/users/op035/data/exvivo/hires_surf/analysis/cortech_thicknesses/smooth_step_surf_5_smooth_steps_curv_0/"
+        "/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_5_smooth_steps_curv_0_no_josa/"
     )
 
     # surf_data_folder = Path(

@@ -674,7 +674,7 @@ def main(
 
 if __name__ == '__main__':
     smooth_steps_surf = 5
-    smooth_steps_curv = 0
+    smooth_steps_curv = 5
     stuff_to_map = ["thickness", "thickness.inf.pial", "thickness.wm.inf"]
     data_path = Path("/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/surface_reconstructions_with_retrained_multiresolution_unet_model/")
     out_path = Path(f"/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa")

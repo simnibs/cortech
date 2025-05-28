@@ -393,7 +393,7 @@ class Hemisphere:
                 if "equivolume" in model_type or "equidistance" in model_type:
                     if "global" in model_type:
                         global_frac = np.loadtxt(infra_supra_model_type_and_path[model_type])
-                        infra_supra_model[model_type] = global_frac.item()
+                        infra_supra_model[model_type] = np.atleast_1d(global_frac.item())
                     elif "local" in model_type:
                         local_frac_im = nib.load(infra_supra_model_type_and_path[model_type])
                         local_frac_fsav = local_frac_im.get_fdata().squeeze()
