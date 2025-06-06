@@ -772,7 +772,7 @@ class Surface:
         ).tocsr()
         return np.array(np.split(csr.indices, csr.indptr[1:-1]), dtype=object)
 
-    def get_nearest_triangles_on_surface(
+    def get_closest_triangles(
         self, points: npt.NDArray, n: int = 1, subset=None, return_index: bool = False
     ):
         """For each point in `points` get the `n` nearest nodes on `surf` and
@@ -868,7 +868,7 @@ class Surface:
 
         """
         if isinstance(pttris, int):
-            pttris = self.get_nearest_triangles_on_surface(points, pttris)
+            pttris = self.get_closest_triangles(points, pttris)
         npttris = list(map(len, pttris))
         pttris = np.concatenate(pttris)
 
@@ -1297,7 +1297,7 @@ class SphericalRegistration(Surface):
             case "linear":
                 # Find the triangles (in `self`) to which each vertex in `other`
                 # projects and get the associated weights
-                points_to_faces = self.get_nearest_triangles_on_surface(
+                points_to_faces = self.get_nearest_triangles(
                     target.vertices, n_nearest_vertices
                 )
                 tris, weights, _, _ = self.project_points(
