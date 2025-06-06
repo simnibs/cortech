@@ -8,6 +8,45 @@ import cortech.utils
 
 
 @pytest.fixture
+def triangulation():
+    # Points
+    # (coords)       (indices)
+    #  1    .  .  .   2  5  9
+    #  0    .  .  .   1  4  7
+    # -1    .  .  .   0  3  6
+    #      -1  0  1
+
+    # Triangle indices
+    # | 3 /  \ 7 |
+    # |  /    \  |
+    # | / 2  6 \ |
+    # | \ 1  5 / |
+    # |  \    /  |
+    # | 0 \  / 4 |
+    x, y, z = (-1, 0, 1), (-1, 0, 1), (0,)
+    return Surface(
+        np.dstack(np.meshgrid(x, y, z)).reshape(-1, 3),
+        np.array(
+            [
+                [0, 3, 1],
+                [1, 3, 4],
+                [3, 7, 4],
+                [3, 6, 7],
+                [1, 5, 2],
+                [1, 4, 5],
+                [4, 7, 5],
+                [5, 7, 8],
+            ]
+        ),
+    )
+
+
+@pytest.fixture
+def one_triangle():
+    return Surface(np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]]), np.array([[0, 1, 2]]))
+
+
+@pytest.fixture
 def diamond(diamond_vertices, diamond_faces):
     return Surface(diamond_vertices, diamond_faces)
 
@@ -123,15 +162,15 @@ class TestSurface:
     #     knn[1:5] ==
     #     n = s.k_ring_neighbors(2, 0)
 
+    def test_self_intersections(self, diamond_intersect):
+        sif = diamond_intersect.self_intersections()
+        np.testing.assert_allclose(sif, [[3, 4], [1, 4], [2, 4]])
+
     def test_remove_self_intersections(self, diamond_intersect):
         """Basic check that *something* sensible is being done."""
         assert len(diamond_intersect.self_intersections()) > 0
         diamond_clean = diamond_intersect.remove_self_intersections()
         assert len(diamond_clean.self_intersections()) == 0
-
-    def test_self_intersections(self, diamond_intersect):
-        sif = diamond_intersect.self_intersections()
-        np.testing.assert_allclose(sif, [[3, 4], [1, 4], [2, 4]])
 
     def test_connected_components(self, diamond):
         cc_label, cc_size = diamond.connected_components()
@@ -165,36 +204,8 @@ class TestSurface:
     def test_gaussian_smooth(self):
         pass
 
-    def test_get_triangle_neighbors(self):
-        """Triangulate an array of points and test neighbors like"""
-
-        # Points
-        # (coords)       (indices)
-        #  1    .  .  .   2  5  9
-        #  0    .  .  .   1  4  7
-        # -1    .  .  .   0  3  6
-        #      -1  0  1
-
-        # Triangle indices
-        # | 3 /  \ 7 |
-        # |  /    \  |
-        # | / 2  6 \ |
-        # | \ 1  5 / |
-        # |  \    /  |
-        # | 0 \  / 4 |
-        tris = np.array(
-            [
-                [0, 3, 1],
-                [1, 3, 4],
-                [3, 7, 4],
-                [3, 6, 7],
-                [1, 5, 2],
-                [1, 4, 5],
-                [4, 7, 5],
-                [5, 7, 8],
-            ]
-        )
-        pttris = transformations._get_triangle_neighbors(tris, nr=9)
+    def test_get_triangle_neighbors(self, triangulation):
+        pttris = triangulation.get_triangle_neighbors()
         pttris_expected = [
             [0],
             [0, 1, 4, 5],
@@ -206,27 +217,10 @@ class TestSurface:
             [2, 3, 6, 7],
             [7],
         ]
-        for i, j in zip(pttris, pttris_expected):
-            assert all(i == j)
+        assert all(all(i == j) for i, j in zip(pttris, pttris_expected))
 
-    def test_get_nearest_triangles_on_surface(self):
-        """Same triangulation as before."""
-        tris = np.array(
-            [
-                [0, 3, 1],
-                [1, 3, 4],
-                [3, 7, 4],
-                [3, 6, 7],
-                [1, 5, 2],
-                [1, 4, 5],
-                [4, 7, 5],
-                [5, 7, 8],
-            ]
-        )
-        x, y, z = (-1, 0, 1), (-1, 0, 1), (0,)
-        points = np.dstack(np.meshgrid(x, y, z)).reshape(-1, 3)
-        surf = dict(points=points, tris=tris)
-
+    @pytest.mark.parametrize("subset", [None, np.array([0, 1, 3, 4])])
+    def test_get_closest_triangles(self, triangulation, subset):
         test_points = np.array(
             [
                 [-0.9, -0.9, 1.0],
@@ -235,33 +229,18 @@ class TestSurface:
                 [0.9, 0.9, 1.0],
             ]
         )
+        pttris = triangulation.get_closest_triangles(test_points, 1, subset)
+        if subset is None:
+            pttris_exp = [[0], [3], [4], [7]]
+        else:
+            pttris_exp = [[0], [0, 1, 2, 3], [0, 1, 4, 5], [1, 2, 5, 6]]
 
-        # all
-        pttris = transformations._get_nearest_triangles_on_surface(test_points, surf, 1)
-        pttris_exp = [[0], [3], [4], [7]]
+        assert all(all(pt == pte) for pt, pte in zip(pttris, pttris_exp))
 
-        for pt, pte in zip(pttris, pttris_exp):
-            assert all(pt == pte)
-
-        # subset
-        subset = np.array([0, 1, 3, 4])
-        pttris = transformations._get_nearest_triangles_on_surface(
-            test_points, surf, 1, subset
-        )
-        pttris_exp = [[0], [0, 1, 2, 3], [0, 1, 4, 5], [1, 2, 5, 6]]
-
-        for pt, pte in zip(pttris, pttris_exp):
-            assert all(pt == pte)
-
-    def test_project_points_to_surface(self):
+    def test_project_points(self, one_triangle):
         """Make a surface consisting of one triangle and project a point from each
         'region' to it.
         """
-        surf = dict(
-            points=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]]),
-            tris=np.array([[0, 1, 2]]),
-        )
-
         # Test a point in each region
         points = np.array(
             [
@@ -303,7 +282,7 @@ class TestSurface:
         dists = np.linalg.norm(points - projs, axis=1)
 
         # Actual output
-        t, w, p, d = transformations._project_points_to_surface(points, surf, pttris)
+        t, w, p, d = one_triangle.project_points(points, pttris)
 
         np.testing.assert_array_equal(t, tris)
         np.testing.assert_allclose(w, weights)
