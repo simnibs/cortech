@@ -815,6 +815,7 @@ class Surface:
         self,
         points: npt.NDArray,
         pttris: int | list | np.ndarray = 5,
+        subset=None,
         return_all_projections: bool = False,
     ):
         """Project each point in `points` to the closest point on the surface.
@@ -868,7 +869,7 @@ class Surface:
 
         """
         if isinstance(pttris, int):
-            pttris = self.get_closest_triangles(points, pttris)
+            pttris = self.get_closest_triangles(points, pttris, subset)
         npttris = list(map(len, pttris))
         pttris = np.concatenate(pttris)
 
@@ -1255,7 +1256,7 @@ class SphericalRegistration(Surface):
         self,
         target: "SphericalRegistration",
         method: str = "linear",
-        n_nearest_vertices: int = 5,
+        n_closest_vertices: int = 5,
     ):
         """Project `self` to `target`, i.e., compute a mapping that can be used
         to map vertex data from `self` to the vertices of `target`. The mapping
@@ -1293,15 +1294,9 @@ class SphericalRegistration(Surface):
                 cols = kdtree.query(target.vertices)[1]
                 rows = np.arange(target.n_vertices)
                 weights = np.ones(target.n_vertices, dtype=int)
-
             case "linear":
-                # Find the triangles (in `self`) to which each vertex in `other`
-                # projects and get the associated weights
-                points_to_faces = self.get_nearest_triangles(
-                    target.vertices, n_nearest_vertices
-                )
                 tris, weights, _, _ = self.project_points(
-                    target.vertices, points_to_faces
+                    target.vertices, n_closest_vertices
                 )
                 rows = np.repeat(np.arange(target.n_vertices), target.n_dim)
                 cols = self.faces[tris].ravel()

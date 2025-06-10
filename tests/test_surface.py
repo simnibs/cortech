@@ -2,8 +2,9 @@ import copy
 
 import numpy as np
 import pytest
+from scipy.spatial import cKDTree
 
-from cortech.surface import Surface
+from cortech.surface import SphericalRegistration, Surface
 import cortech.utils
 
 
@@ -62,6 +63,11 @@ def diamond_intersect(diamond, diamond_barycenters):
 @pytest.fixture
 def sphere(sphere_tuple):
     return Surface(*sphere_tuple)
+
+
+@pytest.fixture
+def sphere_reg(sphere_tuple):
+    return SphericalRegistration(*sphere_tuple)
 
 
 def sph_to_cart(theta, phi):
@@ -302,3 +308,54 @@ class TestSurface:
 
     def test_from_freesurfer_subject_dir(self):
         pass
+
+
+@pytest.mark.parametrize("method", ["nearest", "linear"])
+class TestSphericalRegistration:
+    def test_project_and_resample(self, sphere_reg, method):
+        # Project 'source_field' defined on 'fibonacci_sphere' to dest_points.
+        rng = np.random.default_rng(0)
+
+        # Generate a smooth field to resample
+        source_field = sphere_reg.vertices[:, 0]
+
+        # Generate a point for each face on sphere_reg (to resample the field
+        # to)
+        weights = rng.uniform(size=(sphere_reg.n_faces, 3))
+        weights /= weights.sum(1, keepdims=True)
+
+        # We cheat and use Surface instead of SphericalRegistration to avoid
+        # the vertices being projected back on the sphere, hence rendering the
+        # comparison to the `weights` array invalid
+        n = sphere_reg.n_faces
+        # the triangles of the surface being morphed *to* are unused so just
+        # generate some random ones
+        dest_points = np.sum(sphere_reg.as_mesh() * weights[..., None], 1)
+        dest_sphere = Surface(dest_points, rng.integers(1, n, (2 * n - 4, 3)))
+
+        dest_field = sphere_reg.project_and_resample(
+            dest_sphere, source_field, method=method
+        )
+
+        match method:
+            case "nearest":
+                _, closest = cKDTree(sphere_reg.vertices).query(dest_sphere.vertices)
+                # Test projection
+                np.testing.assert_allclose(sphere_reg._mapping_matrix.data, 1)
+                # Test sampling
+                np.testing.assert_allclose(source_field[closest], dest_field)
+            case "linear":
+                # The weights in _mapping_matrix are sorted by face index,
+                # hence we need to sort the `weights` array before checking
+                weights_sorted = weights[
+                    np.repeat(np.arange(sphere_reg.n_faces), 3).reshape(-1, 3),
+                    sphere_reg.faces.argsort(1),
+                ]
+                # Test projection
+                np.testing.assert_allclose(
+                    sphere_reg._mapping_matrix.data, weights_sorted.ravel()
+                )
+                # Test sampling
+                np.testing.assert_allclose(
+                    np.sum(source_field[sphere_reg.faces] * weights, 1), dest_field
+                )
