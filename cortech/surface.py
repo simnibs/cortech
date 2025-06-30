@@ -1171,7 +1171,7 @@ class Surface:
                 )
             except KeyError:
                 pass
-        meta = cortech.freesurfer.MetaData(cortech.freesurfer.VolumeGeometry(**meta))
+        meta = cortech.freesurfer.MetaData(geometry=meta)
         return cls(v, f, meta)
 
     @classmethod
@@ -1196,9 +1196,7 @@ class Surface:
         # raise ValueError(
         #     "Surface file does not contain information about coordinate space of data."
         # )
-        meta = cortech.freesurfer.MetaData(
-            m.real_ras, cortech.freesurfer.VolumeGeometry(**m.vol_geom)
-        )
+        meta = cortech.freesurfer.MetaData(m.real_ras, m.vol_geom)
         return cls(v, f, meta)
 
     @classmethod

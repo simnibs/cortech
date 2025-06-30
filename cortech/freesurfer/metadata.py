@@ -9,7 +9,7 @@ import numpy.typing as npt
 class VolumeGeometry:
     def __init__(
         self,
-        valid: str,
+        valid: bool,
         filename: str,
         volume: npt.ArrayLike | None = None,
         voxelsize: npt.ArrayLike | None = None,
@@ -20,6 +20,7 @@ class VolumeGeometry:
         cosines: npt.ArrayLike | None = None,
     ):
         """FreeSurfer volume geometry information."""
+        assert valid in {False, True}
         self.valid = valid
         self.filename = filename
         self.volume = volume
@@ -27,9 +28,10 @@ class VolumeGeometry:
 
         if cosines is None:
             if any([xras is None, yras is None, zras is None]):
-                warnings.warn(
-                    "xras, yras, or zras not specified, using default values."
-                )
+                if self.valid:
+                    raise ValueError(
+                        "VolumeGeometry was set to as `valid` but x/y/zras was not specified."
+                    )
                 xras = np.array([-1.0, 0.0, 0.0])
                 yras = np.array([0.0, 0.0, -1.0])
                 zras = np.array([0.0, 1.0, 0.0])
@@ -37,7 +39,10 @@ class VolumeGeometry:
         self.cosines = cosines
 
         if cras is None:
-            warnings.warn("cras not specified, using default values.")
+            if self.valid:
+                raise ValueError(
+                    "VolumeGeometry was set to as `valid` but cras was not specified."
+                )
             cras = np.zeros(3)
         self.cras = np.asarray(cras)
 
@@ -142,8 +147,8 @@ class VolumeGeometry:
 
     def as_freesurfer_dict(self):
         d = OrderedDict(
-            valid=self.valid,
-            filename=self.filename,
+            valid=str(int(self.valid)),
+            filename=str(self.filename),
         )
         if self.volume is not None:
             d["volume"] = self.volume
@@ -169,7 +174,7 @@ class MetaData:
         real_ras: bool = True,
         geometry: dict | VolumeGeometry | None = None,
     ):
-        """Surface metadata."""
+        """FreeSurfer metadata."""
         self.real_ras = real_ras
         self.geometry = geometry
 
@@ -184,7 +189,7 @@ class MetaData:
         elif isinstance(value, VolumeGeometry):
             self._geometry = value
         elif value is None:
-            self._geometry = VolumeGeometry()
+            self._geometry = VolumeGeometry(False, "")
         else:
             raise ValueError("Invalid geometry")
 
