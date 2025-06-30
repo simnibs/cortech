@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.spatial import cKDTree
 
-from cortech.surface import SphericalRegistration, Surface
+from cortech.surface import Sphere, Surface
 import cortech.utils
 
 
@@ -67,7 +67,7 @@ def sphere(sphere_tuple):
 
 @pytest.fixture
 def sphere_reg(sphere_tuple):
-    return SphericalRegistration(*sphere_tuple)
+    return Sphere(*sphere_tuple)
 
 
 def sph_to_cart(theta, phi):

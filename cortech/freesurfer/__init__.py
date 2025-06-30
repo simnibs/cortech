@@ -1,6 +1,11 @@
 import os
 from pathlib import Path
 
+from .io import read_geometry, write_geometry
+from .metadata import MetaData, VolumeGeometry
+
+__all__ = ["MetaData", "read_geometry", "VolumeGeometry", "write_geometry"]
+
 if "FREESURFER_HOME" in os.environ:
     HAS_FREESURFER = True
     HOME = Path(os.environ["FREESURFER_HOME"])

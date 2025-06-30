@@ -1,10 +1,12 @@
 from collections import namedtuple
+import functools
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
 
 import cortech.utils
-from cortech.surface import Surface, SphericalRegistration
+from cortech.surface import Surface, Sphere
 from cortech.constants import Curvature
 
 
@@ -19,25 +21,38 @@ class Hemisphere:
         self,
         white: Surface,
         pial: Surface,
-        inf=None,
-        spherical_registration: None | SphericalRegistration = None,
+        sphere: Surface | None = None,
+        registration: Sphere | None = None,
+        inf: Surface | None = None,
     ) -> None:
         self.white = white
         self.pial = pial
+        self.sphere = sphere
+        self.registration = registration
         self.inf = inf
-        self.spherical_registration = spherical_registration
+
+        self._surfaces = [self.white, self.pial]
+        if self.sphere is not None:
+            self._surfaces.append(self.sphere)
+        if self.registration is not None:
+            self._surfaces.append(self.registration)
+        if self.inf is not None:
+            self._surfaces.append(self.inf)
+
+    def for_all(self, method):
+        out = []
+        for s in self._surfaces:
+            out.append(s.method())
 
     def has_spherical_registration(self):
-        return self.spherical_registration is not None
+        return self.registration is not None
 
     def compute_thickness(self) -> None:
         """Calculate thickness at each vertex of node-matched surfaces."""
 
-        # FIXME this should be a better estimate than simple node-to-node
-        # distance
-        vi = self.white.vertices
-        vo = self.pial.vertices
-        return np.linalg.norm(vo - vi, axis=1)
+        # FIXME this should be a better estimate than simple vertex-to-vertex
+        # distance?
+        return np.linalg.norm(self.pial.vertices - self.white.vertices, axis=1)
 
     def compute_average_curvature(
         self,
@@ -246,29 +261,56 @@ class Hemisphere:
     @classmethod
     def from_freesurfer_subject_dir(
         cls,
-        sub_dir,
-        hemi,
-        white="white",
-        pial="pial",
-        inf=None,
-        sphere="sphere",
-        spherical_registration="sphere.reg",
+        sub_dir: Path | str,
+        hemi: str,
+        white: str | None = "white",
+        pial: str | None = "pial",
+        sphere: str | None = None,
+        registration: str | None = None,
+        inf: str | None = None,
         # thickness="thickness",
         # curv="avg_curv",
     ):
         assert hemi in {"lh", "rh"}
 
-        white = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{white}")
-        pial = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{pial}")
-        if inf is not None:
-            inf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
+        white_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{white}")
 
-        if spherical_registration is not None:
-            spherical_registration = SphericalRegistration.from_freesurfer_subject_dir(
-                sub_dir, f"{hemi}.{spherical_registration}"
+        # The pial surfaces (?h.pial) are symlinks to either ?h.pial.T1 or
+        # ?h.pial.T2 depending on whether the `-T2pial` flag was used when
+        # invoking recon-all. Symlinks created in WSL on Windows do not
+        # seem to work currently, hence this workaround
+        try:
+            pial_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{pial}")
+        except OSError:  # invalid argument
+            try:
+                pial_surf = Surface.from_freesurfer_subject_dir(
+                    sub_dir, f"{hemi}.{pial}.T2"
+                )
+            except FileNotFoundError:  # -T2pial was not used
+                pial_surf = Surface.from_freesurfer_subject_dir(
+                    sub_dir, f"{hemi}.{pial}.T1"
+                )
+
+        if sphere is None:
+            sphere_surf = None
+        else:
+            sphere_surf = Sphere.from_freesurfer_subject_dir(
+                sub_dir, f"{hemi}.{registration}"
             )
 
-        return cls(white, pial, inf=inf, spherical_registration=spherical_registration)
+        if registration is None:
+            reg_surf = None
+        else:
+            reg_surf = Sphere.from_freesurfer_subject_dir(
+                sub_dir, f"{hemi}.{registration}"
+            )
+
+        if inf is None:
+            inf_surf = None
+        else:
+            inf_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
+
+        return cls(white_surf, pial_surf, sphere_surf, reg_surf, inf_surf)
 
 
 class Cortex:
@@ -293,6 +335,7 @@ class Cortex:
 
     @staticmethod
     def iterate_over_hemispheres(method):
+        @functools.wraps(method)
         def wrapper(self, *args, **kwargs):
             t = namedtuple(f"{method.__name__}_result", ("lh", "rh"))
             return t(*[getattr(i, method.__name__)(*args, **kwargs) for i in self])
@@ -325,6 +368,10 @@ class Cortex:
             Hemisphere.from_freesurfer_subject_dir(sub_dir, "lh", *args, **kwargs),
             Hemisphere.from_freesurfer_subject_dir(sub_dir, "rh", *args, **kwargs),
         )
+
+    def __repr__(self):
+        s = "\n".join(f"{h} : {i}" for h, i in zip(("lh", "rh"), self))
+        return s
 
     def __str__(self):
         s = "\n".join(f"{h} : {i}" for h, i in zip(("lh", "rh"), self))

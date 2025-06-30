@@ -2,7 +2,6 @@ python_sources = [
     '__init__.py',
     'constants.py',
     'cortex.py',
-    'freesurfer.py',
     'sphere.py',
     'surface.py',
     'utils.py',
@@ -11,3 +10,4 @@ python_sources = [
 python.install_sources(python_sources, subdir: 'cortech')
 
 subdir('cgal')
+subdir('freesurfer')

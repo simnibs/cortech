@@ -20,13 +20,13 @@ class Surface:
         self,
         vertices: npt.NDArray,
         faces: npt.NDArray,
-        metadata: "MetaData | None" = None,
+        metadata: cortech.freesurfer.MetaData | None = None,
         edge_pairs: npt.NDArray | None = None,
     ) -> None:
         """Class for representing a triangulated surface."""
         self.vertices = vertices
         self.faces = faces
-        self.metadata = metadata or MetaData()
+        self.metadata = metadata or cortech.freesurfer.MetaData()
 
         self.edge_pairs = (
             np.array([[1, 2], [2, 0], [0, 1]], dtype=self.faces.dtype)
@@ -478,10 +478,7 @@ class Surface:
         return out_coords
 
     def interpolate_to_nodes(
-        self,
-        vol: npt.NDArray,
-        affine: npt.NDArray,
-        order: int = 3,
+        self, vol: npt.NDArray, affine: npt.NDArray, order: int = 3
     ) -> npt.NDArray:
         """Interpolate values from a volume to surface node positions.
 
@@ -500,11 +497,7 @@ class Surface:
                         An Nx1 array of intensity values at each node
 
         """
-
-        if self._has_cras:
-            vertices = self.vertices + self.metadata.geometry.cras
-        else:
-            vertices = self.vertices
+        vertices = self.to_scanner_ras(inplace=False)
 
         # Map node coordinates to volume
         inv_affine = np.linalg.inv(affine)
@@ -1042,18 +1035,27 @@ class Surface:
     #     self.faces = np.concatenate((self.faces, other.faces + self.n_vertices))
     #     self.vertices = np.concatenate((self.vertices, other.vertices))
 
-    def _has_cras(self):
-        return self.metadata.geometry.cras is not None
+    def to_scanner_ras(self, *, inplace: bool = True):
+        if self.metadata.is_surface_ras():
+            trans = self.metadata.geometry.get_affine("scanner", fr="tkr")
+            v = nib.affines.apply_affine(trans, self.vertices)
+            if inplace:
+                self.vertices = v
+                self.metadata.real_ras = True
+        else:
+            v = self.vertices
+        return v
 
-    # def add_cras(self):
-    #     """Add the (FreeSurfer) cras offset if it exists in the metadata field."""
-    #     if self._has_cras:
-    #         self.vertices += self.metadata.geometry.cras
-
-    # def sub_cras(self):
-    #     """Subtract the (FreeSurfer) cras offset if it exists in the metadata field."""
-    #     if self._has_cras:
-    #         self.vertices -= self.metadata.geometry.cras
+    def to_surface_ras(self, *, inplace: bool = True):
+        if self.metadata.is_scanner_ras():
+            trans = self.metadata.geometry.get_affine("tkr", fr="scanner")
+            v = nib.affines.apply_affine(trans, self.vertices)
+            if inplace:
+                self.vertices = v
+                self.metadata.real_ras = False
+        else:
+            v = self.vertices
+        return v
 
     def plot(self, scalars=None, mesh_kwargs=None, plotter_kwargs=None):
         # only works when pyvista is installed
@@ -1088,9 +1090,8 @@ class Surface:
                 )
                 faces.coordsys = None
 
-                nib.gifti.GiftiImage(
-                    header=header, darrays=[vertices, faces]
-                ).to_filename(filename)
+                gii = nib.gifti.GiftiImage(header=header, darrays=[vertices, faces])
+                gii.to_filename(filename)
             case ".obj" | ".stl" | ".vtk":
                 import pyvista as pv
 
@@ -1100,11 +1101,13 @@ class Surface:
                         m[k] = v
                 m.save(filename)
             case _:
-                nib.freesurfer.write_geometry(
+                # nib.freesurfer.write_geometry(
+                cortech.freesurfer.write_geometry(
                     filename,
                     self.vertices,
                     self.faces,
-                    volume_info=self.metadata.geometry.as_freesurfer_dict(),
+                    real_ras=self.metadata.real_ras,
+                    vol_geom=self.metadata.geometry.as_freesurfer_dict(),
                 )
 
     @classmethod
@@ -1161,14 +1164,14 @@ class Surface:
             )
         except KeyError:
             pass
-        for i in ("x", "y", "z", "c"):
+        for i in "XYZC":
             try:
-                meta[f"{i}ras"] = np.array(
-                    [float(m[f"VolGeom{i.upper()}_{k}"]) for k in ("R", "A", "S")]
+                meta[f"{i.lower()}ras"] = np.array(
+                    [float(m[f"VolGeom{i}_{k}"]) for k in "RAS"]
                 )
             except KeyError:
                 pass
-        meta = MetaData(VolumeGeometry(**meta))
+        meta = cortech.freesurfer.MetaData(cortech.freesurfer.VolumeGeometry(**meta))
         return cls(v, f, meta)
 
     @classmethod
@@ -1187,12 +1190,15 @@ class Surface:
             Instance of self.
 
         """
-        # keys to save as metadata
-        volgeom_keys = ("volume", "voxelsize", "xras", "yras", "zras", "cras")
-
-        v, f, m = nib.freesurfer.read_geometry(filename, read_metadata=True)
-        volgeom = {k: m[k] for k in volgeom_keys if k in m}
-        meta = MetaData(VolumeGeometry(**volgeom))
+        # Use raw nibabel once it handles scanner ras data
+        # v, f, m = nib.freesurfer.read_geometry(filename, read_metadata=True)
+        v, f, m = cortech.freesurfer.read_geometry(filename, read_metadata=True)
+        # raise ValueError(
+        #     "Surface file does not contain information about coordinate space of data."
+        # )
+        meta = cortech.freesurfer.MetaData(
+            m.real_ras, cortech.freesurfer.VolumeGeometry(**m.vol_geom)
+        )
         return cls(v, f, meta)
 
     @classmethod
@@ -1245,16 +1251,17 @@ class Surface:
             )
 
 
-class SphericalRegistration(Surface):
-    def __init__(self, *args, **kwargs) -> None:
+class Sphere(Surface):
+    def __init__(self, *args, normalize: bool = True, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # Ensure on unit sphere
-        self.vertices = cortech.utils.normalize(self.vertices, axis=-1)
+        if normalize:
+            self.vertices = cortech.utils.normalize(self.vertices, axis=-1)
         self._mapping_matrix = None
 
     def project(
         self,
-        target: "SphericalRegistration",
+        target: "Sphere",
         method: str = "linear",
         n_closest_vertices: int = 5,
     ):
@@ -1330,194 +1337,7 @@ class SphericalRegistration(Surface):
         return self._mapping_matrix @ values
 
     def project_and_resample(
-        self, target: "SphericalRegistration", values: npt.NDArray, *args, **kwargs
+        self, target: "Sphere", values: npt.NDArray, *args, **kwargs
     ):
         self.project(target, *args, **kwargs)
         return self.resample(values)
-
-
-class VolumeGeometry:
-    def __init__(
-        self,
-        volume: npt.ArrayLike | None = None,
-        voxelsize: npt.ArrayLike | None = None,
-        xras: npt.ArrayLike | None = None,
-        yras: npt.ArrayLike | None = None,
-        zras: npt.ArrayLike | None = None,
-        cras: npt.ArrayLike | None = None,
-        real_ras: bool = True,
-    ):
-        """FreeSurfer volume geometry data."""
-        self.volume = volume
-        self.voxelsize = voxelsize
-        self.xras = xras
-        self.yras = yras
-        self.zras = zras
-        self.cras = cras
-        self.real_ras = real_ras
-
-    @property
-    def volume(self):
-        return self._volume
-
-    @volume.setter
-    def volume(self, value):
-        if value is not None:
-            assert len(value) == 3
-            self._volume = np.asarray(value, dtype=int)
-        else:
-            self._volume = None
-
-    @property
-    def voxelsize(self):
-        return self._voxelsize
-
-    @voxelsize.setter
-    def voxelsize(self, value):
-        if value is not None:
-            assert len(value) == 3
-            self._voxelsize = np.asarray(value, dtype=int)
-        else:
-            self._voxelsize = None
-
-    @property
-    def xras(self):
-        return self._xras
-
-    @xras.setter
-    def xras(self, value):
-        if value is None or any(i is None for i in value):
-            self._xras = None
-        else:
-            self._xras = np.asarray(value)
-            self._set_ras()
-
-    @property
-    def yras(self):
-        return self._yras
-
-    @yras.setter
-    def yras(self, value):
-        if value is None or any(i is None for i in value):
-            self._yras = None
-        else:
-            self._yras = np.asarray(value)
-            self._set_ras()
-
-    @property
-    def zras(self):
-        return self._zras
-
-    @zras.setter
-    def zras(self, value):
-        if value is None or any(i is None for i in value):
-            self._zras = None
-        else:
-            self._zras = np.asarray(value)
-            self._set_ras()
-
-    @property
-    def cras(self):
-        return self._cras
-
-    @cras.setter
-    def cras(self, value):
-        if value is None or any(i is None for i in value):
-            self._cras = None
-        else:
-            self._cras = np.asarray(value)
-            self._set_ras()
-
-    def _set_ras(self):
-        if all(hasattr(self, i) for i in ("xras", "yras", "zras", "cras")) and any(
-            i is None for i in (self.xras, self.yras, self.zras, self.cras)
-        ):
-            self.ras = np.eye(4)
-            self.ras[:3, 0] = self.xras
-            self.ras[:3, 1] = self.yras
-            self.ras[:3, 2] = self.zras
-            self.ras[:3, 3] = self.cras
-        else:
-            self.ras = None
-
-    def is_scanner_ras(self):
-        return self.real_ras
-
-    def as_gifti_dict(self):
-        d = {}
-        if self.volume is not None:
-            d["VolGeomWidth"] = self.volume[0]
-            d["VolGeomHeight"] = self.volume[1]
-            d["VolGeomDepth"] = self.volume[2]
-        if self.voxelsize is not None:
-            d["VolGeomXsize"] = self.voxelsize[0]
-            d["VolGeomYsize"] = self.voxelsize[1]
-            d["VolGeomZsize"] = self.voxelsize[2]
-        if self.xras is not None:
-            d["VolGeomX_R"] = self.xras[0]
-            d["VolGeomX_A"] = self.xras[1]
-            d["VolGeomX_S"] = self.xras[2]
-        if self.yras is not None:
-            d["VolGeomY_R"] = self.yras[0]
-            d["VolGeomY_A"] = self.yras[1]
-            d["VolGeomY_S"] = self.yras[2]
-        if self.zras is not None:
-            d["VolGeomZ_R"] = self.zras[0]
-            d["VolGeomZ_A"] = self.zras[1]
-            d["VolGeomZ_S"] = self.zras[2]
-        if self.cras is not None:
-            d["VolGeomC_R"] = self.cras[0]
-            d["VolGeomC_A"] = self.cras[1]
-            d["VolGeomC_S"] = self.cras[2]
-            # SurfaceCenterX = ,
-            # SurfaceCenterY = ,
-            # SurfaceCenterZ = ,
-        return d
-
-    def as_freesurfer_dict(self):
-        d = dict(
-            head=np.array([2, 0, 20], dtype=np.int32),
-            valid="1 # volume info valid",
-            filename="vol.nii",
-        )
-        if self.volume is not None:
-            d["volume"] = self.volume
-        if self.voxelsize is not None:
-            d["voxelsize"] = self.voxelsize
-        if self.xras is not None:
-            d["xras"] = self.xras
-        if self.yras is not None:
-            d["yras"] = self.yras
-        if self.zras is not None:
-            d["zras"] = self.zras
-        if self.cras is not None:
-            d["cras"] = self.cras
-        return d
-
-    @classmethod
-    def from_freesurfer_metadata_dict(cls, meta):
-        inputs = {
-            k.lstrip("VolGeom"): v for k, v in meta.items() if k.startswith("VolGeom")
-        }
-        return cls(**inputs)
-
-
-class MetaData:
-    def __init__(self, geometry: dict | VolumeGeometry | None = None):
-        """Surface metadata."""
-        self.geometry = geometry
-
-    @property
-    def geometry(self):
-        return self._geometry
-
-    @geometry.setter
-    def geometry(self, value):
-        if isinstance(value, dict):
-            self._geometry = VolumeGeometry(**value)
-        elif isinstance(value, VolumeGeometry):
-            self._geometry = value
-        elif value is None:
-            self._geometry = VolumeGeometry()
-        else:
-            raise ValueError("Invalid geometry")
