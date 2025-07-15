@@ -1,16 +1,13 @@
-import numpy as np
-import nibabel as nib
-from pathlib import Path
+import os
 import shutil
 import tempfile
+from pathlib import Path
 
-import os
-from sklearn.metrics import r2_score
-import multiprocessing as mp
-from functools import partial
-import sys
-from cortech.cortex import Hemisphere
+import nibabel as nib
+import numpy as np
 from scipy.spatial import KDTree
+
+from cortech.cortex import Hemisphere
 
 
 def _compute_fs_style_thickness(
@@ -80,6 +77,7 @@ def _equivolume_fit_smooth(distance_error, knn, number_of_nodes):
         min_index[i] = min_ind[:, None]
 
     return min_index
+
 
 def _equivolume_fit_node(distance_error, number_of_nodes):
     """Find the equivolume fraction with the lowest error for each node (plus neighbors) for a given node
@@ -191,15 +189,15 @@ def _linear_fit_neighborhood(
     betas = np.zeros((number_of_nodes, num_predictors))
     predicted_values = np.zeros((number_of_nodes, 1))
 
-    #Move the nodes to first dim
-    training_predictors = training_predictors.swapaxes(0,1)
-    training_values = training_values.swapaxes(0,1)
+    # Move the nodes to first dim
+    training_predictors = training_predictors.swapaxes(0, 1)
+    training_values = training_values.swapaxes(0, 1)
 
     for mm in muq:
         i = np.where(m == mm)[0]
         nid = np.array([knn[j] for j in i])
         # Grab the values from the neighbors
-        predictors_tmp = training_predictors[nid,...]
+        predictors_tmp = training_predictors[nid, ...]
 
         # Reshape so that it's nodes x ngbrs x predictors
         predictors_tmp = predictors_tmp.reshape((nid.shape[0], -1, num_predictors))
@@ -208,7 +206,7 @@ def _linear_fit_neighborhood(
         U, S, Vt = np.linalg.svd(predictors_tmp, full_matrices=False)
 
         # Get the target values at the nodes we are dealing with
-        target_values_tmp = training_values[nid,...].reshape((nid.shape[0], -1))
+        target_values_tmp = training_values[nid, ...].reshape((nid.shape[0], -1))
 
         betas_tmp = np.squeeze(
             Vt.swapaxes(1, 2)
@@ -338,15 +336,16 @@ def _prepare_data_for_linear_fit(
         # if "k1" in key or "k2" in key:
         #     gaussian_curv = gaussian_curv * measurement_dict[key]
 
-
     # Center the predictors
     for key in measurement_dict:
         measure_tmp = measurement_dict[key]
-        measure_tmp = measure_tmp - measure_tmp.mean(axis=0)[None,:]
+        measure_tmp = measure_tmp - measure_tmp.mean(axis=0)[None, :]
         measurement_dict[key] = measure_tmp
 
     # Add gaussian curvature into the dict
-    measurement_dict["k1k2.avg.fsaverage"] = measurement_dict['k1.avg.fsaverage'] * measurement_dict['k2.avg.fsaverage']
+    measurement_dict["k1k2.avg.fsaverage"] = (
+        measurement_dict["k1.avg.fsaverage"] * measurement_dict["k2.avg.fsaverage"]
+    )
     # thicknesses = thicknesses.T
     target_values = target_fraction.T
 
@@ -380,6 +379,9 @@ def _cv_linear_fit(
     knn: list[np.array(int)],
     sub_names: list[str],
     hemis: list[str],
+    sphere_reg_name="sphere.reg",
+    smooth_steps_surf=5,
+    smooth_steps_curv=0,
 ):
     """Cross-validate and save the linear model
 
@@ -405,7 +407,7 @@ def _cv_linear_fit(
     r2s = []
     num_rh = 0
     for h in hemis:
-        if 'rh' in h:
+        if "rh" in h:
             num_rh += 1
 
     pred_error = np.zeros((number_of_nodes, num_subjects))
@@ -427,17 +429,27 @@ def _cv_linear_fit(
 
         else:
             beta = _linear_fit(
-                predictors[selector, :, :].swapaxes(0,-1),
-                target_thicknesses[selector, :].swapaxes(0,-1),
+                predictors[selector, :, :].swapaxes(0, -1),
+                target_thicknesses[selector, :].swapaxes(0, -1),
             )
 
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, beta, "linear_model", hemis[s], fsav_path
+            surf_path,
+            sub,
+            beta,
+            "linear_model",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
 
-        thickness_frac_on_fsav = np.einsum("ij, ij -> i", predictors[s,:,:], beta)
+        thickness_frac_on_fsav = np.einsum("ij, ij -> i", predictors[s, :, :], beta)
         thickness_frac_on_fsav = np.clip(thickness_frac_on_fsav, 0, 1)
-        pred_error_only_fsav[:,s] = (inf_thickness[s,:] - thickness_frac_on_fsav * thickness[s,:]).squeeze()
+        pred_error_only_fsav[:, s] = (
+            inf_thickness[s, :] - thickness_frac_on_fsav * thickness[s, :]
+        ).squeeze()
         overlay = nib.freesurfer.mghformat.MGHImage(
             error_on_subject.astype("float32"), np.eye(4)
         )
@@ -451,7 +463,6 @@ def _cv_linear_fit(
         )
 
         pred_error[:, s] = error_on_fsav.squeeze()
-
 
         # Save coeffs per subject
         for i, n in enumerate(outfiles):
@@ -467,13 +478,15 @@ def _cv_linear_fit(
     abs_error = np.mean(np.abs(pred_error), axis=1)
     abs_error_fsav = np.mean(np.abs(pred_error_only_fsav), axis=1)
 
-    overlay = nib.freesurfer.mghformat.MGHImage(abs_error_fsav.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.ONLY.FSAV.linear_model.mgh"))
+    overlay = nib.freesurfer.mghformat.MGHImage(
+        abs_error_fsav.astype("float32"), np.eye(4)
+    )
+    nib.save(overlay, outpath / Path("lh.abs.average.error.ONLY.FSAV.linear_model.mgh"))
     # overlay = nib.freesurfer.mghformat.MGHImage(r2.astype("float32"), np.eye(4))
     # nib.save(overlay, outpath / Path(f"lh.r2.mgh"))
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.linear_model.mgh"))
+    nib.save(overlay, outpath / Path("lh.abs.average.error.linear_model.mgh"))
 
     # Also fit with all subjects to get the betas
     beta = _linear_fit_neighborhood(
@@ -499,9 +512,12 @@ def _cv_equivol_fit(
     number_of_subjects,
     knn: list[np.array(int)],
     fsav_path: str,
+    sphere_reg_name="sphere.reg",
     min_frac=0.2,
     max_frac=0.8,
     num_fracs=61,
+    smooth_steps_surf=5,
+    smooth_steps_curv=0,
 ):
     """Cross-validate and save the best local and global equivolume parameters.
 
@@ -519,6 +535,7 @@ def _cv_equivol_fit(
             so if you want to change these, they need to be changed in that script too.
        max_frac: float: maximum fraction tested for the isovolume model. Note above applies.
        num_fracs: int: number of steps by which the fractions are stepped from min to max
+       sphere_reg_name: str: name of the spherical registration file
     Returns:
 
     """
@@ -572,7 +589,15 @@ def _cv_equivol_fit(
 
         fracs_tmp = fracs[fractions.astype("int")].squeeze()
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equivolume_local", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equivolume_local",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
         overlay = nib.freesurfer.mghformat.MGHImage(
             error_on_subject.astype("float32"), np.eye(4)
@@ -594,18 +619,24 @@ def _cv_equivol_fit(
     abs_error = np.mean(np.abs(pred_error), axis=1)
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.equivolume.neighbors.mgh"))
+    nib.save(overlay, outpath / Path("lh.abs.average.error.equivolume.neighbors.mgh"))
 
     pred_error = np.zeros((number_of_nodes, number_of_subjects))
     for s, sub in enumerate(sub_names):
         selector = [x for x in range(number_of_subjects) if x != s]
-        fractions = _equivolume_fit_node(
-            isovol_errors[:, :, selector], number_of_nodes
-        )
+        fractions = _equivolume_fit_node(isovol_errors[:, :, selector], number_of_nodes)
 
         fracs_tmp = fracs[fractions.astype("int")].squeeze()
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equivolume_local", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equivolume_local",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
         overlay = nib.freesurfer.mghformat.MGHImage(
             error_on_subject.astype("float32"), np.eye(4)
@@ -619,7 +650,9 @@ def _cv_equivol_fit(
         nib.save(
             overlay,
             outpath
-            / Path(f"{hemis[s]}.error.{sub}.equivolume.neighbors.per.node.fsaverage.mgh"),
+            / Path(
+                f"{hemis[s]}.error.{sub}.equivolume.neighbors.per.node.fsaverage.mgh"
+            ),
         )
 
         pred_error[:, s] = error_on_fsav.squeeze()
@@ -627,7 +660,7 @@ def _cv_equivol_fit(
     abs_error = np.mean(np.abs(pred_error), axis=1)
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.equivolume.per.node.mgh"))
+    nib.save(overlay, outpath / Path("lh.abs.average.error.equivolume.per.node.mgh"))
     # Fit regionally
     HOME = Path(os.environ["FREESURFER_HOME"])
     label_aparc, _, _ = nib.freesurfer.io.read_annot(
@@ -649,7 +682,15 @@ def _cv_equivol_fit(
         fracs_tmp = fracs[fractions.astype("int")].squeeze()
 
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equivolume_local", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equivolume_local",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
 
         overlay = nib.freesurfer.mghformat.MGHImage(
@@ -674,7 +715,7 @@ def _cv_equivol_fit(
     abs_error[np.any(fractions_not_specified, axis=1)] = -1
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.equivolume.regions.mgh"))
+    nib.save(overlay, outpath / Path("lh.abs.average.error.equivolume.regions.mgh"))
 
     # Also fit on all subs
     fractions = _equivolume_fit_smooth(isovol_errors, knn, number_of_nodes)
@@ -682,7 +723,7 @@ def _cv_equivol_fit(
     overlay = nib.freesurfer.mghformat.MGHImage(
         fracs[fractions.astype("int")].astype("float32"), np.eye(4)
     )
-    nib.save(overlay, outpath / Path(f"lh.equivolume.neighbor.frac.mgh"))
+    nib.save(overlay, outpath / Path("lh.equivolume.neighbor.frac.mgh"))
     call = f"mris_apply_reg --src {outpath}/lh.equivolume.neighbor.frac.mgh --trg {outpath}/rh.equivolume.neighbor.frac.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
     os.system(call)
 
@@ -701,7 +742,15 @@ def _cv_equivol_fit(
         )
         fracs_tmp = fracs[minimum_fraction_index].squeeze()
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equivolume_global", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equivolume_global",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
 
         overlay = nib.freesurfer.mghformat.MGHImage(
@@ -725,7 +774,7 @@ def _cv_equivol_fit(
     abs_error = np.mean(np.abs(pred_error_global), axis=1)
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.global.mgh"))
+    nib.save(overlay, outpath / Path("lh.abs.average.error.global.mgh"))
     np.savetxt(
         outpath / Path("best_fraction_per_subject.csv"),
         minimum_fraction_indices,
@@ -849,6 +898,17 @@ def _predict_on_sub(
                 overlay = nib.freesurfer.mghformat.MGHImage(
                     error_fsav_rh.astype("float32"), np.eye(4)
                 )
+                if 0:
+                    debug_save_path = Path(
+                        f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_no_josa/"
+                    )
+                    metadata = surf_tmp.white.metadata
+                    nib.freesurfer.write_geometry(
+                        debug_save_path / sub / f"{h}.inf.predicted.{method}",
+                        inf_prediction_tmp[method] + metadata["cras"],
+                        surf_tmp.white.faces,
+                    )
+
                 nib.save(overlay, tmpdir / "error_fsav_rh_tmp.mgh")
                 call = f"mris_apply_reg --src {tmpdirname}/error_fsav_rh_tmp.mgh --trg {tmpdirname}/rh-on-lh.error_fsav.mgh --streg {fsav_path}/xhemi/surf/lh.fsaverage_sym.sphere.reg {fsav_path}/surf/lh.fsaverage_sym.sphere.reg"
                 os.system(call)
@@ -875,6 +935,16 @@ def _predict_on_sub(
             error_subject = inf_thickness_true - inf_thickness_estimated
             error_fsav = surf_tmp.spherical_registration.resample(error_subject)
 
+            if 0:
+                debug_save_path = Path(
+                    f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_no_josa/"
+                )
+                metadata = surf_tmp.white.metadata
+                nib.freesurfer.write_geometry(
+                    debug_save_path / sub / f"{h}.inf.predicted.{method}",
+                    inf_prediction_tmp[method] + metadata["cras"],
+                    surf_tmp.white.faces,
+                )
         elif fracs_tmp.size == 1:
             # If we only have a single, global fraction no mapping from fsav is needed.
             tmp_dict = {}
@@ -890,6 +960,16 @@ def _predict_on_sub(
             inf_thickness_estimated = _compute_fs_style_thickness(
                 surf_tmp.white.vertices, inf_prediction_tmp[method]
             )
+            if 0:
+                debug_save_path = Path(
+                    f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_no_josa/"
+                )
+                metadata = surf_tmp.white.metadata
+                nib.freesurfer.write_geometry(
+                    debug_save_path / sub / f"{h}.inf.predicted.{method}",
+                    inf_prediction_tmp[method] + metadata["cras"],
+                    surf_tmp.white.faces,
+                )
             error_subject = inf_thickness_true - inf_thickness_estimated
             if "lh" in hemi:
                 error_fsav = surf_tmp.spherical_registration.resample(error_subject)
@@ -926,9 +1006,12 @@ def _cv_equidist_fit(
     number_of_nodes,
     number_of_subjects,
     knn: list[np.array(int)],
+    sphere_reg_name="sphere.reg",
     min_frac=0.2,
     max_frac=0.8,
     num_fracs=61,
+    smooth_steps_surf=5,
+    smooth_steps_curv=0,
 ):
     """Cross-validate and save the linear model
 
@@ -996,7 +1079,15 @@ def _cv_equidist_fit(
 
         fracs_tmp = fracs[fractions.astype("int")]
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equidistance_local", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equidistance_local",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
         overlay = nib.freesurfer.mghformat.MGHImage(
             error_on_subject.astype("float32"), np.eye(4)
@@ -1019,9 +1110,7 @@ def _cv_equidist_fit(
     abs_error = np.mean(np.abs(pred_error), axis=1)
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(
-        overlay, outpath / Path(f"lh.abs.average.error.equidistance.neighbors.mgh")
-    )
+    nib.save(overlay, outpath / Path("lh.abs.average.error.equidistance.neighbors.mgh"))
 
     pred_error = np.zeros((number_of_nodes, number_of_subjects))
     for s, sub in enumerate(sub_names):
@@ -1032,7 +1121,15 @@ def _cv_equidist_fit(
 
         fracs_tmp = fracs[fractions.astype("int")]
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equidistance_local", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equidistance_local",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
         overlay = nib.freesurfer.mghformat.MGHImage(
             error_on_subject.astype("float32"), np.eye(4)
@@ -1047,7 +1144,9 @@ def _cv_equidist_fit(
         nib.save(
             overlay,
             outpath
-            / Path(f"{hemis[s]}.error.{sub}.equidistance.neighbors.per.node.fsaverage.mgh"),
+            / Path(
+                f"{hemis[s]}.error.{sub}.equidistance.neighbors.per.node.fsaverage.mgh"
+            ),
         )
 
         pred_error[:, s] = error_on_fsav.squeeze()
@@ -1055,9 +1154,7 @@ def _cv_equidist_fit(
     abs_error = np.mean(np.abs(pred_error), axis=1)
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(
-        overlay, outpath / Path(f"lh.abs.average.error.equidistance.per.node.mgh")
-    )
+    nib.save(overlay, outpath / Path("lh.abs.average.error.equidistance.per.node.mgh"))
     # Fit regionally
     HOME = Path(os.environ["FREESURFER_HOME"])
     label_aparc, _, _ = nib.freesurfer.io.read_annot(
@@ -1079,7 +1176,15 @@ def _cv_equidist_fit(
         fracs_tmp = fracs[fractions.astype("int")]
 
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equidistance_local", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equidistance_local",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
 
         overlay = nib.freesurfer.mghformat.MGHImage(
@@ -1105,7 +1210,7 @@ def _cv_equidist_fit(
     abs_error[np.any(fractions_not_specified, axis=1)] = -1
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.equidistance.regions.mgh"))
+    nib.save(overlay, outpath / Path("lh.abs.average.error.equidistance.regions.mgh"))
 
     # Get the best over all subjects
     fractions = _equivolume_fit_smooth(isodist_errors, knn, number_of_nodes)
@@ -1113,7 +1218,7 @@ def _cv_equidist_fit(
     overlay = nib.freesurfer.mghformat.MGHImage(
         fracs[fractions.astype("int")].astype("float32"), np.eye(4)
     )
-    nib.save(overlay, outpath / Path(f"lh.equidistance.neighbor.frac.mgh"))
+    nib.save(overlay, outpath / Path("lh.equidistance.neighbor.frac.mgh"))
     # Map it to rh
     call = f"mris_apply_reg --src {outpath}/lh.equidistance.neighbor.frac.mgh --trg {outpath}/rh.equidistance.neighbor.frac.mgh --streg {fsav_path}/xhemi/surf/rh.fsaverage_sym.sphere.reg {fsav_path}/surf/rh.fsaverage_sym.sphere.reg"
     os.system(call)
@@ -1133,7 +1238,15 @@ def _cv_equidist_fit(
         )
         fracs_tmp = fracs[minimum_fraction_index].squeeze()
         error_on_subject, error_on_fsav = _predict_on_sub(
-            surf_path, sub, fracs_tmp, "equidistance_global", hemis[s], fsav_path
+            surf_path,
+            sub,
+            fracs_tmp,
+            "equidistance_global",
+            hemis[s],
+            fsav_path,
+            sphere_reg_name,
+            smooth_steps_surf=smooth_steps_surf,
+            smooth_steps_curv=smooth_steps_curv,
         )
 
         overlay = nib.freesurfer.mghformat.MGHImage(
@@ -1157,7 +1270,7 @@ def _cv_equidist_fit(
     abs_error = np.mean(np.abs(pred_error_global), axis=1)
 
     overlay = nib.freesurfer.mghformat.MGHImage(abs_error.astype("float32"), np.eye(4))
-    nib.save(overlay, outpath / Path(f"lh.abs.average.error.global.mgh"))
+    nib.save(overlay, outpath / Path("lh.abs.average.error.global.mgh"))
     np.savetxt(
         outpath / Path("best_fraction_per_subject.csv"),
         minimum_fraction_indices,
@@ -1190,6 +1303,9 @@ def main(
     target_name: str,
     data_path: os.PathLike,
     neighborhood_size: int = 1,
+    sphere_reg_name="sphere.reg",
+    smooth_steps_surf=5,
+    smooth_steps_curv=0,
 ) -> None:
     """This function takes in a path pointing to the processed surface data, i.e., data mapped to fsaverage,
     and fits various models to predict the infra-supra-border. The models considered are: isodistance, isovolume,
@@ -1215,12 +1331,18 @@ def main(
                 A path object pointing to a folder where the data is stored.
     neighborhood_size: int
                 An integer defining the size of the neighborhood of a node to include in the fit. 0 would be only the node itself, 1 would refer to the nearest connected neighbors, 2 to the second-order neighbors etc.
+    sphere_reg_name: str
+                Name of the spherical registration file.
+    smooth_steps_surf: int
+                Number of smoothing steps for the surface.
+    smooth_steps_curv: int
+                Number of smoothing steps for the curvature.
     Returns
     -------
     """
 
     # Before fitting the models, let's map all the single right hemi results to the left hemi
-    # _map_rh_to_lh(surf_data_folder, fsav_path)
+    _map_rh_to_lh(surf_data_folder, fsav_path)
 
     # Okay start out by fitting the linear model
 
@@ -1235,27 +1357,29 @@ def main(
 
     # Run leave-one-out cross-validation for linear model
 
-    # out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
-    # outpath = data_path / f"linear_model_nn_0"
+    out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
+    outpath = data_path / "linear_model_test_prediction"
 
-
-    # _cv_linear_fit(
-    #     predictors,
-    #     target_values,
-    #     inf_thickness,
-    #     thickness,
-    #     out_files,
-    #     outpath,
-    #     fsav_path,
-    #     fs_run_path,
-    #     number_of_nodes,
-    #     knn,
-    #     sub_names,
-    #     hemis,
-    # )
+    _cv_linear_fit(
+        predictors,
+        target_values,
+        inf_thickness,
+        thickness,
+        out_files,
+        outpath,
+        fsav_path,
+        fs_run_path,
+        number_of_nodes,
+        knn,
+        sub_names,
+        hemis,
+        sphere_reg_name,
+        smooth_steps_surf=smooth_steps_surf,
+        smooth_steps_curv=smooth_steps_curv,
+    )
 
     # # Next cross-validate the isovolume values
-    outpath = data_path / "equivolume_model_nn_0"
+    outpath = data_path / "equivolume_model_test_prediction"
     number_of_subjects = predictors.shape[0]
 
     _cv_equivol_fit(
@@ -1266,10 +1390,13 @@ def main(
         number_of_subjects,
         knn,
         fsav_path,
+        sphere_reg_name,
+        smooth_steps_surf=smooth_steps_surf,
+        smooth_steps_curv=smooth_steps_curv,
     )
 
     # # Next cross-validate the isodistance values
-    outpath = data_path / "equidistance_model_nn_0"
+    outpath = data_path / "equidistance_model_test_prediction"
     number_of_subjects = predictors.shape[0]
     _cv_equidist_fit(
         data_path,
@@ -1279,6 +1406,9 @@ def main(
         number_of_nodes,
         number_of_subjects,
         knn,
+        sphere_reg_name,
+        smooth_steps_surf=smooth_steps_surf,
+        smooth_steps_curv=smooth_steps_curv,
     )
 
 
@@ -1297,7 +1427,7 @@ def _map_rh_to_lh(surf_data_path: os.PathLike, fsav_path: os.PathLike):
     """
 
     for f in surf_data_path.glob("**/*"):
-        if "lh." in f.name or not "fsaverage" in f.name:
+        if "lh." in f.name or "fsaverage" not in f.name:
             continue
 
         print(f"Processing: {f}")
@@ -1318,7 +1448,6 @@ def _map_rh_to_lh(surf_data_path: os.PathLike, fsav_path: os.PathLike):
 
 
 if __name__ == "__main__":
-
     # Grab the FS dir from the environ
     fs_home = Path(os.environ["FREESURFER_HOME"])
     if not fs_home.exists():
@@ -1327,16 +1456,23 @@ if __name__ == "__main__":
     fsav_path = fs_home / "subjects" / "fsaverage"
     fsav = Hemisphere.from_freesurfer_subject_dir(fsav_path, "lh")
 
+    smooth_steps_surf = 5
+    smooth_steps_curv = 20
     surf_data_folder = Path(
-        "/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_5_smooth_steps_curv_0_no_josa/"
+        f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
     )
+
+    if "josa" in str(surf_data_folder):
+        sphere_reg_name = "josa.sphere.reg"
+    else:
+        sphere_reg_name = "sphere.reg"
 
     # surf_data_folder = Path(
     #     "/autofs/space/rauma_001/users/op035/data/exvivo/hires_surf/analysis/output_smooth20/"
     # )
 
     fs_run_folder = Path(
-        "/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/surface_reconstructions_with_retrained_multiresolution_unet_model/"
+        "/mnt/projects/CORTECH/nobackup/exvivo/derivatives/final_surfaces/"
     )
     # Could use some the thickness gradient as well?
     # predictor_names = ['thickness_cortex.fsaverage', 'k1.avg.fsaverage', 'k2.avg.fsaverage', 'thickness.gradient.magnitude.fsaverage']
@@ -1351,7 +1487,7 @@ if __name__ == "__main__":
     #     "k1.fsaverage",
     #     "k2.fsaverage",
     # ]
-   
+
     target_name = "thickness.wm.inf.fsaverage"
 
     main(
@@ -1363,6 +1499,9 @@ if __name__ == "__main__":
         predictor_names,
         target_name,
         surf_data_folder,
+        sphere_reg_name=sphere_reg_name,
+        smooth_steps_surf=smooth_steps_surf,
+        smooth_steps_curv=smooth_steps_curv,
     )
 
     # stuff_to_map = ["thickness", "thickness.inf.pial", "thickness.wm.inf"]

@@ -674,16 +674,16 @@ def main(
 
 if __name__ == '__main__':
     smooth_steps_surf = 5
-    smooth_steps_curv = 5
+    smooth_steps_curv = 20
     stuff_to_map = ["thickness", "thickness.inf.pial", "thickness.wm.inf"]
-    data_path = Path("/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/surface_reconstructions_with_retrained_multiresolution_unet_model/")
-    out_path = Path(f"/autofs/space/rauma_001/users/op035/data/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa")
+    data_path = Path("/mnt/projects/CORTECH/nobackup/exvivo/derivatives/final_surfaces/")
+    out_path = Path(f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa")
 
     if out_path.exists():
         shutil.rmtree(out_path)
 
     out_path.mkdir()
 
-    main(data_path, out_path, stuff_to_map, smoothing_steps_surface = smooth_steps_surf, smoothing_steps_curvature = smooth_steps_curv, sphere_reg_name='josa.sphere.reg')
+    main(data_path, out_path, stuff_to_map, smoothing_steps_surface=smooth_steps_surf, smoothing_steps_curvature=smooth_steps_curv, sphere_reg_name='josa.sphere.reg')
     #
     _compute_fsaverage_stats(out_path)
