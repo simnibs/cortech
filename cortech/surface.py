@@ -15,18 +15,76 @@ import cortech.cgal.convex_hull_3
 from cortech.constants import Curvature
 
 
+# class Data(dict):
+#     def __init__(self, )
+
+
+# class Vertices(np.ndarray):
+#     def __init__(self, coords, data = None):
+#         super().__init__()
+#         self.coords = coords
+#         self.data = data
+
+#     @property
+#     def coords(self):
+#         return self._coords
+
+#     @coords.setter
+#     def coords(self, value):
+#         value = np.atleast_2d(value)
+#         assert value.ndim == 2
+#         self._coords = value
+#         self.n, self.dim = value.shape
+
+#     def __array__(self):
+#         return self.coords
+
+
+# class Vertices:
+#     def __init__(self, coords, data = None, ):
+#         self.coords = coords
+
+#     @property
+#     def coords(self):
+#         return self._coords
+
+#     @coords.setter
+#     def coords(self, value):
+#         value = np.atleast_2d(value)
+#         assert value.ndim == 2
+#         self._coords = value
+#         self.n, self.dim = value.shape
+
+#     def __array__(self):
+#         return self.coords
+
+
+# class Faces:
+
+
 class Surface:
     def __init__(
         self,
         vertices: npt.NDArray,
         faces: npt.NDArray,
-        metadata: cortech.freesurfer.MetaData | None = None,
+        space: str = "scanner ras",
+        geometry: dict | cortech.freesurfer.VolumeGeometry | None = None,
         edge_pairs: npt.NDArray | None = None,
     ) -> None:
         """Class for representing a triangulated surface."""
         self.vertices = vertices
         self.faces = faces
-        self.metadata = metadata or cortech.freesurfer.MetaData()
+        assert space in {"scanner ras", "surface ras"}
+        self.space = space
+
+        if isinstance(geometry, dict):
+            self.geometry = cortech.freesurfer.VolumeGeometry(**geometry)
+        elif isinstance(geometry, cortech.freesurfer.VolumeGeometry):
+            self.geometry = geometry
+        elif geometry is None:
+            self.geometry = cortech.freesurfer.VolumeGeometry(False)
+        else:
+            raise ValueError("Invalid geometry")
 
         self.edge_pairs = (
             np.array([[1, 2], [2, 0], [0, 1]], dtype=self.faces.dtype)
@@ -555,7 +613,7 @@ class Surface:
 
     def convex_hull(self):
         v, f = cortech.cgal.convex_hull_3.convex_hull(self.vertices)
-        return Surface(v, f, metadata=self.metadata)
+        return Surface(v, f, self.space, self.geometry, self.edge_pairs)
 
     def remove_self_intersections(self, inplace: bool = False):
         """Remove self-intersections. This process includes smoothing and
@@ -1035,24 +1093,30 @@ class Surface:
     #     self.faces = np.concatenate((self.faces, other.faces + self.n_vertices))
     #     self.vertices = np.concatenate((self.vertices, other.vertices))
 
+    def is_surface_ras(self):
+        return self.space == "surface ras"
+
+    def is_scanner_ras(self):
+        return self.space == "scanner ras"
+
     def to_scanner_ras(self, *, inplace: bool = True):
-        if self.metadata.is_surface_ras():
-            trans = self.metadata.geometry.get_affine("scanner", fr="tkr")
+        if self.is_surface_ras():
+            trans = self.geometry.get_affine("scanner", fr="tkr")
             v = nib.affines.apply_affine(trans, self.vertices)
             if inplace:
                 self.vertices = v
-                self.metadata.real_ras = True
+                self.space = "scanner ras"
         else:
             v = self.vertices
         return v
 
     def to_surface_ras(self, *, inplace: bool = True):
-        if self.metadata.is_scanner_ras():
-            trans = self.metadata.geometry.get_affine("tkr", fr="scanner")
+        if self.space == "scanner ras":
+            trans = self.geometry.get_affine("tkr", fr="scanner")
             v = nib.affines.apply_affine(trans, self.vertices)
             if inplace:
                 self.vertices = v
-                self.metadata.real_ras = False
+                self.space = "surface ras"
         else:
             v = self.vertices
         return v
@@ -1065,33 +1129,43 @@ class Surface:
             self, scalars, mesh_kwargs=mesh_kwargs, plotter_kwargs=plotter_kwargs
         )
 
+    def save_gifti(self, filename: Path | str):
+        header = None
+        vol_geom = self.geometry.as_gifti_dict()
+
+        if self.is_scanner_ras():
+            fs_from = "scanner"
+            fs_to = "tkr"
+        elif self.is_surface_ras():
+            fs_from = "tkr"
+            fs_to = "scanner"
+        nii_from = self.geometry._fsstring_to_niistring[fs_from]
+        nii_to = self.geometry._fsstring_to_niistring[fs_to]
+        affine = self.geometry.get_affine(fs_to, fr=fs_from)
+        coordsys = nib.gifti.GiftiCoordSystem(nii_from, nii_to, affine)
+
+        vertices = nib.gifti.GiftiDataArray(
+            self.vertices.astype(np.float32),
+            intent="NIFTI_INTENT_POINTSET",
+            coordsys=coordsys,
+            meta=vol_geom,
+        )
+        faces = nib.gifti.GiftiDataArray(
+            self.faces.astype(np.int32),
+            intent="NIFTI_INTENT_TRIANGLE",
+            coordsys=coordsys,
+        )
+        faces.coordsys = None
+
+        gii = nib.gifti.GiftiImage(header=header, darrays=[vertices, faces])
+        gii.to_filename(filename)
+
     def save(self, filename: Path | str, scalars: dict | None = None):
         filename = Path(filename)
 
         match filename.suffix:
             case ".gii":
-                header = None
-                meta = (
-                    None
-                    if self.metadata.geometry is None
-                    else self.metadata.geometry.as_gifti_dict()
-                )
-                coordsys = nib.gifti.GiftiCoordSystem(0, 0, np.eye(4))
-                vertices = nib.gifti.GiftiDataArray(
-                    self.vertices.astype(np.float32),
-                    intent="NIFTI_INTENT_POINTSET",
-                    coordsys=coordsys,
-                    meta=meta,
-                )
-                faces = nib.gifti.GiftiDataArray(
-                    self.faces.astype(np.int32),
-                    intent="NIFTI_INTENT_TRIANGLE",
-                    coordsys=None,
-                )
-                faces.coordsys = None
-
-                gii = nib.gifti.GiftiImage(header=header, darrays=[vertices, faces])
-                gii.to_filename(filename)
+                self.save_gifti(filename)
             case ".obj" | ".stl" | ".vtk":
                 import pyvista as pv
 
@@ -1106,17 +1180,17 @@ class Surface:
                     filename,
                     self.vertices,
                     self.faces,
-                    real_ras=self.metadata.real_ras,
-                    vol_geom=self.metadata.geometry.as_freesurfer_dict(),
+                    real_ras=self.is_scanner_ras(),
+                    vol_geom=self.geometry.as_freesurfer_dict(),
                 )
 
     @classmethod
     def from_gifti(cls, filename: Path | str):
         """Read surface from Gifti file. Will also read the following metadata
-        fields if present
+        from FreeSurfer if present
 
-        volume geometry
-
+        - real_ras
+        - volume geometry
             VolGeomWidth
             VolGeomHeight
             VolGeomDepth
@@ -1149,30 +1223,8 @@ class Surface:
         gii = nib.load(filename)
         v = gii.agg_data("NIFTI_INTENT_POINTSET").astype(float)
         f = gii.agg_data("NIFTI_INTENT_TRIANGLE")
-        m = gii.darrays[0].meta  # 0 = pointset; 1 = triangle
-
-        meta = {}
-        try:
-            meta["volume"] = np.array(
-                [int(m[f"VolGeom{k}"]) for k in ("Width", "Height", "Depth")]
-            )
-        except KeyError:
-            pass
-        try:
-            meta["voxelsize"] = np.array(
-                [float(m[f"VolGeom{k}size"]) for k in ("X", "Y", "Z")]
-            )
-        except KeyError:
-            pass
-        for i in "XYZC":
-            try:
-                meta[f"{i.lower()}ras"] = np.array(
-                    [float(m[f"VolGeom{i}_{k}"]) for k in "RAS"]
-                )
-            except KeyError:
-                pass
-        meta = cortech.freesurfer.MetaData(geometry=meta)
-        return cls(v, f, meta)
+        space, geometry = cortech.freesurfer.metadata.read_metadata_gifti(gii)
+        return cls(v, f, space, geometry)
 
     @classmethod
     def from_freesurfer(cls, filename: Path | str):
@@ -1190,14 +1242,10 @@ class Surface:
             Instance of self.
 
         """
-        # Use raw nibabel once it handles scanner ras data
-        # v, f, m = nib.freesurfer.read_geometry(filename, read_metadata=True)
         v, f, m = cortech.freesurfer.read_geometry(filename, read_metadata=True)
-        # raise ValueError(
-        #     "Surface file does not contain information about coordinate space of data."
-        # )
-        meta = cortech.freesurfer.MetaData(m.real_ras, m.vol_geom)
-        return cls(v, f, meta)
+        space = "scanner ras" if m.real_ras else "surface ras"
+        geometry = cortech.freesurfer.VolumeGeometry(**m.vol_geom)
+        return cls(v, f, space, geometry)
 
     @classmethod
     def from_vtk(cls, filename: Path | str):

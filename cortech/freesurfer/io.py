@@ -32,40 +32,34 @@ def _read_tag(fobj):
 
 
 def _read_userealras_old(fobj):
-    return dict(real_ras=bool(np.fromfile(fobj, ">i4", 1)[0]))
+    return bool(np.fromfile(fobj, ">i4", 1)[0])
 
 
 def _read_surf_geom_old(fobj):
     """Read volume geometry (in old format) associated with the surface."""
-    surf_geom = OrderedDict()
-    for key in (
-        "valid",
-        "filename",
-        "volume",
-        "voxelsize",
-        "xras",
-        "yras",
-        "zras",
-        "cras",
-    ):
-        pair = fobj.readline().decode("utf-8").split("=")
-        if pair[0].strip() != key or len(pair) != 2:
-            raise OSError("Error parsing volume info.")
-        if key in ("valid", "filename"):
-            surf_geom[key] = pair[1].strip()
-        elif key == "volume":
-            surf_geom[key] = np.array(pair[1].split(), int)
-        else:
-            surf_geom[key] = np.array(pair[1].split(), float)
-    return OrderedDict(vol_geom=surf_geom)
+    lines = [fobj.readline().decode("utf-8").split("=") for _ in range(8)]
+    vol_geom = OrderedDict({line[0].strip(): line[1].strip() for line in lines})
+    for k, v in vol_geom.items():
+        match k:
+            case "valid":
+                vol_geom[k] = bool(int(v.split("#")[0].strip()))
+            case "filename":
+                pass
+            case "volume":
+                vol_geom[k] = np.asarray(v.split(), int)
+            case "voxelsize" | "xras" | "yras" | "zras" | "cras":
+                vol_geom[k] = np.asarray(v.split(), float)
+            case _:
+                raise ValueError(f"Invalid key in old surface geometry: {k}")
+    return vol_geom
 
 
 def _read_tag_value(fobj, tag):
     """Read the value associated with a tag."""
     if tag == Tag.OLD_USEREALRAS:
-        return _read_userealras_old(fobj)
+        return dict(real_ras=_read_userealras_old(fobj))
     elif tag == Tag.OLD_SURF_GEOM:
-        return _read_surf_geom_old(fobj)
+        return dict(vol_geom=_read_surf_geom_old(fobj))
     else:
         raise ValueError(f"Unable to read tag: {tag}.")
 
@@ -132,12 +126,15 @@ def _write_vol_geom_old(fobj, volume_info):
         raise ValueError(f"Invalid volume info: {diff.pop()}.")
 
     for key in keys:
-        if key in ("valid", "filename"):
+        if key == "valid":
             val = volume_info[key]
-            fobj.write(f"{key} = {val}\n".encode())
+            fobj.write(f"{key} = {int(val):d}\n".encode())
+        if key == "filename":
+            val = volume_info[key]
+            fobj.write(f"{key} = {val:s}\n".encode())
         elif key == "volume":
             val = volume_info[key]
-            fobj.write(f"{key} = {val[0]} {val[1]} {val[2]}\n".encode())
+            fobj.write(f"{key} = {val[0]:d} {val[1]:d} {val[2]:d}\n".encode())
         else:
             val = volume_info[key]
             fobj.write(

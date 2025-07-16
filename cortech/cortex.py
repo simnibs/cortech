@@ -19,12 +19,15 @@ class Hemisphere:
 
     def __init__(
         self,
+        name: str,
         white: Surface,
         pial: Surface,
-        sphere: Surface | None = None,
+        sphere: Sphere | None = None,
         registration: Sphere | None = None,
         inf: Surface | None = None,
     ) -> None:
+        assert name in {"lh", "rh"}
+        self.name = name
         self.white = white
         self.pial = pial
         self.sphere = sphere
@@ -38,11 +41,6 @@ class Hemisphere:
             self._surfaces.append(self.registration)
         if self.inf is not None:
             self._surfaces.append(self.inf)
-
-    def for_all(self, method):
-        out = []
-        for s in self._surfaces:
-            out.append(s.method())
 
     def has_spherical_registration(self):
         return self.registration is not None
@@ -310,7 +308,7 @@ class Hemisphere:
         else:
             inf_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
 
-        return cls(white_surf, pial_surf, sphere_surf, reg_surf, inf_surf)
+        return cls(hemi, white_surf, pial_surf, sphere_surf, reg_surf, inf_surf)
 
 
 class Cortex:
