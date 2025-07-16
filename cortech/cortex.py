@@ -1,4 +1,6 @@
 from collections import namedtuple
+import functools
+from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
@@ -6,7 +8,7 @@ import nibabel as nib
 from scipy.spatial import KDTree
 
 import cortech.utils
-from cortech.surface import Surface, SphericalRegistration
+from cortech.surface import Surface, Sphere
 from cortech.constants import Curvature
 
 
@@ -21,18 +23,33 @@ class Hemisphere:
         self,
         white: Surface,
         pial: Surface,
-        inf=None,
-        spherical_registration: None | SphericalRegistration = None,
+        sphere: Surface | None = None,
+        registration: Sphere | None = None,
+        inf: Surface | None = None,
         infra_supra_model=None,
     ) -> None:
         self.white = white
         self.pial = pial
+        self.sphere = sphere
+        self.registration = registration
         self.inf = inf
-        self.spherical_registration = spherical_registration
         self.infra_supra_model = infra_supra_model
 
+        self._surfaces = [self.white, self.pial]
+        if self.sphere is not None:
+            self._surfaces.append(self.sphere)
+        if self.registration is not None:
+            self._surfaces.append(self.registration)
+        if self.inf is not None:
+            self._surfaces.append(self.inf)
+
+    def for_all(self, method):
+        out = []
+        for s in self._surfaces:
+            out.append(s.method())
+
     def has_spherical_registration(self):
-        return self.spherical_registration is not None
+        return self.registration is not None
 
     def has_infra_supra_model(self):
         return self.infra_supra_model is not None
@@ -40,11 +57,9 @@ class Hemisphere:
     def compute_node_to_node_difference(self) -> npt.NDArray[float]:
         """Calculate thickness at each vertex of node-matched surfaces."""
 
-        # FIXME this should be a better estimate than simple node-to-node
-        # distance
-        vi = self.white.vertices
-        vo = self.pial.vertices
-        return np.linalg.norm(vo - vi, axis=1)
+        # FIXME this should be a better estimate than simple vertex-to-vertex
+        # distance?
+        return np.linalg.norm(self.pial.vertices - self.white.vertices, axis=1)
 
     def compute_thickness(self) -> npt.NDArray[float]:
         """This function calculates a FreeSurfer "style" thickness by finding the minimum distance between a white matter
@@ -362,32 +377,64 @@ class Hemisphere:
     @classmethod
     def from_freesurfer_subject_dir(
         cls,
-        sub_dir,
-        hemi,
-        white="white",
-        pial="pial",
-        inf=None,
-        sphere="sphere",
-        spherical_registration="sphere.reg",
+        sub_dir: Path | str,
+        hemi: str,
+        white: str | None = "white",
+        pial: str | None = "pial",
+        sphere: str | None = None,
+        registration: str | None = None,
+        inf: str | None = None,
         infra_supra_model_type_and_path=None,
+        # thickness="thickness",
+        # curv="avg_curv",
     ):
         assert hemi in {"lh", "rh"}
 
-        white = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{white}")
-        pial = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{pial}")
-        if inf is not None:
-            inf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
+        white_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{white}")
 
-        if spherical_registration is not None:
-            spherical_registration = SphericalRegistration.from_freesurfer_subject_dir(
-                sub_dir, f"{hemi}.{spherical_registration}"
+        # The pial surfaces (?h.pial) are symlinks to either ?h.pial.T1 or
+        # ?h.pial.T2 depending on whether the `-T2pial` flag was used when
+        # invoking recon-all. Symlinks created in WSL on Windows do not
+        # seem to work currently, hence this workaround
+        try:
+            pial_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{pial}")
+        except OSError:  # invalid argument
+            try:
+                pial_surf = Surface.from_freesurfer_subject_dir(
+                    sub_dir, f"{hemi}.{pial}.T2"
+                )
+            except FileNotFoundError:  # -T2pial was not used
+                pial_surf = Surface.from_freesurfer_subject_dir(
+                    sub_dir, f"{hemi}.{pial}.T1"
+                )
+
+        if sphere is None:
+            sphere_surf = None
+        else:
+            sphere_surf = Sphere.from_freesurfer_subject_dir(
+                sub_dir, f"{hemi}.{registration}"
             )
 
 
+        if registration is None:
+            reg_surf = None
+        else:
+            reg_surf = Sphere.from_freesurfer_subject_dir(
+                sub_dir, f"{hemi}.{registration}"
+            )
+
+        if inf is None:
+            inf_surf = None
+        else:
+            inf_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
+
         infra_supra_model = {}
         if infra_supra_model_type_and_path is not None:
-            fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", hemi)
-            fsavg.spherical_registration.compute_projection(spherical_registration)
+            if registration is None:
+                registration='sphere.reg'
+
+            fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", hemi, registration=registration)
+            fsavg.registration.compute_projection(reg_surf)
             number_of_nodes = white.n_vertices
             for model_type in infra_supra_model_type_and_path.keys():
                 if "equivolume" in model_type or "equidistance" in model_type:
@@ -397,7 +444,7 @@ class Hemisphere:
                     elif "local" in model_type:
                         local_frac_im = nib.load(infra_supra_model_type_and_path[model_type])
                         local_frac_fsav = local_frac_im.get_fdata().squeeze()
-                        local_frac = fsavg.spherical_registration.resample(local_frac_fsav)
+                        local_frac = fsavg.registration.project_and_resample(local_frac_fsav)
                         infra_supra_model[model_type] = local_frac
                 elif "linear" in model_type:
                     # NOTE: for the linear model the order matters! I'll keep it general now,
@@ -412,14 +459,14 @@ class Hemisphere:
                         parameters_fsav.append(param_tmp)
 
                     parameters_fsav = np.array(parameters_fsav).transpose()
-                    parameters = fsavg.spherical_registration.resample(parameters_fsav)
+                    parameters = fsavg.registration.project_and_resample(parameters_fsav)
                     infra_supra_model[model_type] = parameters
 
             if not infra_supra_model:
                 print('Model loading failed, using the default (equivolume with fraction 0.5)')
                 infra_supra_model['equivolume_global'] = 0.5
 
-        return cls(white, pial, inf=inf, spherical_registration=spherical_registration, infra_supra_model=infra_supra_model)
+        return cls(white_surf, pial_surf, sphere_surf, reg_surf, inf_surf, infra_supra_model=infra_supra_model)
 
 
 class Cortex:
@@ -444,6 +491,7 @@ class Cortex:
 
     @staticmethod
     def iterate_over_hemispheres(method):
+        @functools.wraps(method)
         def wrapper(self, *args, **kwargs):
             t = namedtuple(f"{method.__name__}_result", ("lh", "rh"))
             return t(*[getattr(i, method.__name__)(*args, **kwargs) for i in self])
@@ -476,6 +524,10 @@ class Cortex:
             Hemisphere.from_freesurfer_subject_dir(sub_dir, "lh", *args, **kwargs),
             Hemisphere.from_freesurfer_subject_dir(sub_dir, "rh", *args, **kwargs),
         )
+
+    def __repr__(self):
+        s = "\n".join(f"{h} : {i}" for h, i in zip(("lh", "rh"), self))
+        return s
 
     def __str__(self):
         s = "\n".join(f"{h} : {i}" for h, i in zip(("lh", "rh"), self))

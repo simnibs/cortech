@@ -20,13 +20,13 @@ class Surface:
         self,
         vertices: npt.NDArray,
         faces: npt.NDArray,
+        metadata: cortech.freesurfer.MetaData | None = None,
         edge_pairs: npt.NDArray | None = None,
-        metadata=None,
     ) -> None:
         """Class for representing a triangulated surface."""
         self.vertices = vertices
         self.faces = faces
-        self.metadata = metadata
+        self.metadata = metadata or cortech.freesurfer.MetaData()
 
         self.edge_pairs = (
             np.array([[1, 2], [2, 0], [0, 1]], dtype=self.faces.dtype)
@@ -56,7 +56,7 @@ class Surface:
 
     @vertices.setter
     def vertices(self, value):
-        value = np.atleast_2d(value).astype(float)
+        value = np.atleast_2d(value)
         assert value.ndim == 2
         self._vertices = value
         self.n_vertices, self.n_dim = value.shape
@@ -478,10 +478,7 @@ class Surface:
         return out_coords
 
     def interpolate_to_nodes(
-        self,
-        vol: npt.NDArray,
-        affine: npt.NDArray,
-        order: int = 3,
+        self, vol: npt.NDArray, affine: npt.NDArray, order: int = 3
     ) -> npt.NDArray:
         """Interpolate values from a volume to surface node positions.
 
@@ -500,12 +497,7 @@ class Surface:
                         An Nx1 array of intensity values at each node
 
         """
-
-        # Check if metadata exists and if cras exists
-        if self.metadata is not None and "cras" in self.metadata:
-            vertices = self.vertices + self.metadata["cras"]
-        else:
-            vertices = self.vertices
+        vertices = self.to_scanner_ras(inplace=False)
 
         # Map node coordinates to volume
         inv_affine = np.linalg.inv(affine)
@@ -773,7 +765,7 @@ class Surface:
         ).tocsr()
         return np.array(np.split(csr.indices, csr.indptr[1:-1]), dtype=object)
 
-    def get_nearest_triangles_on_surface(
+    def get_closest_triangles(
         self, points: npt.NDArray, n: int = 1, subset=None, return_index: bool = False
     ):
         """For each point in `points` get the `n` nearest nodes on `surf` and
@@ -812,23 +804,27 @@ class Surface:
             pttris = list(map(lambda x: np.unique(np.concatenate(x)), pttris))
         return (pttris, ix) if return_index else pttris
 
-    def project_points_to_surface(
+    def project_points(
         self,
         points: npt.NDArray,
-        pttris: list | np.ndarray,
+        pttris: int | list | np.ndarray = 5,
+        subset=None,
         return_all_projections: bool = False,
     ):
-        """Project each point in `points` to the closest point on the surface
-        described by `surf` restricted to the triangles in `pttris`.
+        """Project each point in `points` to the closest point on the surface.
+        `pttris` is used to restrict possible triangles (on self) to which each
+        point can be projected. This is used to speed up computations.
 
         PARAMETERS
         ----------
         points : ndarray
             Array with shape (n, d) where n is the number of points and d is the
             dimension.
-        pttris : ndarray | list
-            If a ragged/nested array, the ith entry contains the triangles against
-            which the ith point will be tested.
+        pttris : int | list | ndarray
+            If an integer, specifies the number of closest triangles on self
+            against which each point is tested. If a ragged/nested array, the
+            ith entry contains the triangles against which the ith point will
+            be tested.
         return_all_projections : bool
             Whether to return all projection results (i.e., the projection of a
             point on each of the triangles which it was tested against) or only the
@@ -865,6 +861,8 @@ class Surface:
         https://www.geometrictools.com/Documentation/DistancePoint3Triangle3.pdf
 
         """
+        if isinstance(pttris, int):
+            pttris = self.get_closest_triangles(points, pttris, subset)
         npttris = list(map(len, pttris))
         pttris = np.concatenate(pttris)
 
@@ -1037,6 +1035,28 @@ class Surface:
     #     self.faces = np.concatenate((self.faces, other.faces + self.n_vertices))
     #     self.vertices = np.concatenate((self.vertices, other.vertices))
 
+    def to_scanner_ras(self, *, inplace: bool = True):
+        if self.metadata.is_surface_ras():
+            trans = self.metadata.geometry.get_affine("scanner", fr="tkr")
+            v = nib.affines.apply_affine(trans, self.vertices)
+            if inplace:
+                self.vertices = v
+                self.metadata.real_ras = True
+        else:
+            v = self.vertices
+        return v
+
+    def to_surface_ras(self, *, inplace: bool = True):
+        if self.metadata.is_scanner_ras():
+            trans = self.metadata.geometry.get_affine("tkr", fr="scanner")
+            v = nib.affines.apply_affine(trans, self.vertices)
+            if inplace:
+                self.vertices = v
+                self.metadata.real_ras = False
+        else:
+            v = self.vertices
+        return v
+
     def plot(self, scalars=None, mesh_kwargs=None, plotter_kwargs=None):
         # only works when pyvista is installed
         from cortech.visualization import plot_surface
@@ -1046,76 +1066,221 @@ class Surface:
         )
 
     def save(self, filename: Path | str, scalars: dict | None = None):
-        import pyvista as pv
+        filename = Path(filename)
 
-        m = pv.make_tri_mesh(self.vertices, self.faces)
-        if scalars is not None:
-            for k, v in scalars.items():
-                m[k] = v
-        m.save(filename)
+        match filename.suffix:
+            case ".gii":
+                header = None
+                meta = (
+                    None
+                    if self.metadata.geometry is None
+                    else self.metadata.geometry.as_gifti_dict()
+                )
+                coordsys = nib.gifti.GiftiCoordSystem(0, 0, np.eye(4))
+                vertices = nib.gifti.GiftiDataArray(
+                    self.vertices.astype(np.float32),
+                    intent="NIFTI_INTENT_POINTSET",
+                    coordsys=coordsys,
+                    meta=meta,
+                )
+                faces = nib.gifti.GiftiDataArray(
+                    self.faces.astype(np.int32),
+                    intent="NIFTI_INTENT_TRIANGLE",
+                    coordsys=None,
+                )
+                faces.coordsys = None
+
+                gii = nib.gifti.GiftiImage(header=header, darrays=[vertices, faces])
+                gii.to_filename(filename)
+            case ".obj" | ".stl" | ".vtk":
+                import pyvista as pv
+
+                m = pv.make_tri_mesh(self.vertices, self.faces)
+                if scalars is not None:
+                    for k, v in scalars.items():
+                        m[k] = v
+                m.save(filename)
+            case _:
+                # nib.freesurfer.write_geometry(
+                cortech.freesurfer.write_geometry(
+                    filename,
+                    self.vertices,
+                    self.faces,
+                    real_ras=self.metadata.real_ras,
+                    vol_geom=self.metadata.geometry.as_freesurfer_dict(),
+                )
 
     @classmethod
-    def from_freesurfer_subject_dir(cls, subject_dir, surface, read_metadata=True):
+    def from_gifti(cls, filename: Path | str):
+        """Read surface from Gifti file. Will also read the following metadata
+        fields if present
+
+        volume geometry
+
+            VolGeomWidth
+            VolGeomHeight
+            VolGeomDepth
+            VolGeomXsize
+            VolGeomYsize
+            VolGeomZsize
+            VolGeomX_R
+            VolGeomX_A
+            VolGeomX_S
+            VolGeomY_R
+            VolGeomY_A
+            VolGeomY_S
+            VolGeomZ_R
+            VolGeomZ_A
+            VolGeomZ_S
+            VolGeomC_R
+            VolGeomC_A
+            VolGeomC_S
+
+        Parameters
+        ----------
+        filename : Path | str
+            File to read.
+
+        Returns
+        -------
+        Surface :
+            Instance of self.
+        """
+        gii = nib.load(filename)
+        v = gii.agg_data("NIFTI_INTENT_POINTSET").astype(float)
+        f = gii.agg_data("NIFTI_INTENT_TRIANGLE")
+        m = gii.darrays[0].meta  # 0 = pointset; 1 = triangle
+
+        meta = {}
+        try:
+            meta["volume"] = np.array(
+                [int(m[f"VolGeom{k}"]) for k in ("Width", "Height", "Depth")]
+            )
+        except KeyError:
+            pass
+        try:
+            meta["voxelsize"] = np.array(
+                [float(m[f"VolGeom{k}size"]) for k in ("X", "Y", "Z")]
+            )
+        except KeyError:
+            pass
+        for i in "XYZC":
+            try:
+                meta[f"{i.lower()}ras"] = np.array(
+                    [float(m[f"VolGeom{i}_{k}"]) for k in "RAS"]
+                )
+            except KeyError:
+                pass
+        meta = cortech.freesurfer.MetaData(geometry=meta)
+        return cls(v, f, meta)
+
+    @classmethod
+    def from_freesurfer(cls, filename: Path | str):
+        """Read default and .srf files from FreeSurfer.
+
+
+        Parameters
+        ----------
+        filename : Path | str
+            File to read.
+
+        Returns
+        -------
+        Surface :
+            Instance of self.
+
+        """
+        # Use raw nibabel once it handles scanner ras data
+        # v, f, m = nib.freesurfer.read_geometry(filename, read_metadata=True)
+        v, f, m = cortech.freesurfer.read_geometry(filename, read_metadata=True)
+        # raise ValueError(
+        #     "Surface file does not contain information about coordinate space of data."
+        # )
+        meta = cortech.freesurfer.MetaData(m.real_ras, m.vol_geom)
+        return cls(v, f, meta)
+
+    @classmethod
+    def from_vtk(cls, filename: Path | str):
+        """
+
+        Parameters
+        ----------
+        filename : Path | str
+            File to read.
+
+        Returns
+        -------
+        Surface :
+            Instance of self.
+        """
+        import pyvista as pv
+
+        m = pv.load(filename)
+        return cls(m.points, m.faces.reshape(-1, 4)[:, 1:])
+
+    @classmethod
+    def from_file(cls, filename: Path | str):
+        filename = Path(filename)
+
+        match filename.suffix:
+            case ".gii":
+                return cls.from_gifti(filename)
+            case ".obj" | ".stl" | ".vtk":
+                return cls.from_vtk(filename)
+            case _:
+                # if it doesn't match any of the above extensions, assume
+                # FreeSurfer format
+                return cls.from_freesurfer(filename)
+
+    @classmethod
+    def from_freesurfer_subject_dir(cls, subject_dir: Path | str, surface: str):
         if subject_dir == "fsaverage":
             assert cortech.freesurfer.HAS_FREESURFER, "Could not find FREESURFER_HOME"
             subject_dir = cortech.freesurfer.HOME / "subjects" / subject_dir
 
-        surf_file = Path(subject_dir) / "surf" / surface
-        # FS is changing to gii, but slowly
-        if not surf_file.exists():
-            surf_file = surf_file.parent / (str(surf_file.name) + ".gii")
-            surf_gii = nib.load(surf_file)
-            v, f = surf_gii.agg_data()
-
-            v = v.astype(float)
-            # Getting information out of the gifti is a pain
-            # I'll only get the cras
-            cras_array = np.array(
-                [
-                    float(surf_gii.darrays[0].meta["VolGeomC_R"]),
-                    float(surf_gii.darrays[0].meta["VolGeomC_A"]),
-                    float(surf_gii.darrays[0].meta["VolGeomC_S"]),
-                ]
-            )
-            metadata = {"cras": cras_array}
+        filename = Path(subject_dir) / "surf" / surface
+        if filename.exists():
+            return cls.from_freesurfer(filename)
+        elif (filename_gii := filename.parent / f"{filename.name}.gii").exists():
+            return cls.from_gifti(filename_gii)
         else:
-            v, f, metadata = nib.freesurfer.read_geometry(
-                surf_file, read_metadata=read_metadata
+            raise ValueError(
+                f"Unable to find {surface} in {subject_dir}. Tried {filename} and {filename_gii}."
             )
-        return cls(v, f, metadata=metadata)
 
-
-class SphericalRegistration(Surface):
-    def __init__(
-        self,
-        vertices: npt.NDArray,
-        faces: npt.NDArray,
-        metadata=None,
-    ) -> None:
-        super().__init__(vertices, faces, metadata)
+class Sphere(Surface):
+    def __init__(self, *args, normalize: bool = True, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
         # Ensure on unit sphere
-        self.vertices = cortech.utils.normalize(self.vertices, axis=-1)
+        if normalize:
+            self.vertices = cortech.utils.normalize(self.vertices, axis=-1)
+        self._mapping_matrix = None
 
-    def compute_projection(
+    def project(
         self,
-        target: "SphericalRegistration",
+        target: "Sphere",
         method: str = "linear",
-        n_nearest_vertices: int = 5,
+        n_closest_vertices: int = 5,
     ):
-        """Compute a mapping from `self` to `target` that can be used to map
-        vertex data from `self` to the vertices of `target`. The mapping is
-        estimated by projecting the vertices of `target` onto the surface of
+        """Project `self` to `target`, i.e., compute a mapping that can be used
+        to map vertex data from `self` to the vertices of `target`. The mapping
+        is estimated by projecting the vertices of `target` onto the surface of
         `self`.
 
         The projection matrix is a sparse matrix with dimensions
         (target.n_vertices, self.n_vertices) where each row has exactly one
         (nearest) or three (linear) entries that sum to one.
 
+        For example, to map data from fsaverage to subject space,
+
+            fsavg_data = ...
+            fsavg = SphericalRegistration( ... )
+            subject = SphericalRegistration( ... )
+            fsavg.project(subject)
+            subject_data = fsavg.resample( fsavg_data )
 
         PARAMETERS
         ----------
-        self :
-            The source mesh (i.e., the mesh to interpolate *from*).
         target :
             The target mesh (i.e., the mesh to interpolate *to*).
         n_nearest_vertices: int
@@ -1132,23 +1297,18 @@ class SphericalRegistration(Surface):
                 kdtree = scipy.spatial.cKDTree(self.vertices)
                 cols = kdtree.query(target.vertices)[1]
                 rows = np.arange(target.n_vertices)
-                weights = np.ones(target.n_vertices)
-
+                weights = np.ones(target.n_vertices, dtype=int)
             case "linear":
-                # Find the triangles (in `self`) to which each vertex in `other`
-                # projects and get the associated weights
-                points_to_faces = self.get_nearest_triangles_on_surface(
-                    target.vertices, n_nearest_vertices
-                )
-                tris, weights, _, _ = self.project_points_to_surface(
-                    target.vertices,
-                    points_to_faces,
+                tris, weights, _, _ = self.project_points(
+                    target.vertices, n_closest_vertices
                 )
                 rows = np.repeat(np.arange(target.n_vertices), target.n_dim)
                 cols = self.faces[tris].ravel()
                 weights = weights.ravel()
             case _:
-                raise ValueError(f"Invalid mapping method (got {method}).")
+                raise ValueError(
+                    f"Invalid mapping method, please select `nearest` or `linear` (got {method})."
+                )
 
         self._mapping_matrix = scipy.sparse.csr_array(
             (weights, (rows, cols)), shape=(target.n_vertices, self.n_vertices)
@@ -1157,7 +1317,7 @@ class SphericalRegistration(Surface):
 
     def resample(self, values: npt.NDArray):
         """Pull values defined on `self` to the vertices of the target surface
-        used as input to `compute_projection`.
+        used as input to `project`.
 
         Parameters
         ----------
@@ -1169,5 +1329,12 @@ class SphericalRegistration(Surface):
         mapped values: npt.NDArray
             Data mapped onto the target surface. The shape is (target.n_vertices, ...)
         """
-
+        if self._mapping_matrix is None:
+            raise RuntimeError("No mapping matrix found. Please run `project`.")
         return self._mapping_matrix @ values
+
+    def project_and_resample(
+        self, target: "Sphere", values: npt.NDArray, *args, **kwargs
+    ):
+        self.project(target, *args, **kwargs)
+        return self.resample(values)

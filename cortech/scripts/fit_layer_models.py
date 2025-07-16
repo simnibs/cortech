@@ -833,13 +833,13 @@ def _predict_on_sub(
     for h in hemi:
         print(f"Predicting on {sub} using {method}")
         surf_tmp = Hemisphere.from_freesurfer_subject_dir(
-            path_tmp, h, inf="inf", spherical_registration=sphere_reg_name
+            path_tmp, h, inf="inf", registration=sphere_reg_name
         )
         surf_tmp.white.smooth_taubin(n_iter=smooth_steps_surf, inplace=True)
         surf_tmp.pial.smooth_taubin(n_iter=smooth_steps_surf, inplace=True)
-        fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", h)
-        surf_tmp.spherical_registration.compute_projection(fsavg.spherical_registration)
-        fsavg.spherical_registration.compute_projection(surf_tmp.spherical_registration)
+        fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", h, registration=sphere_reg_name)
+        surf_tmp.registration.project(fsavg.registration)
+        fsavg.registration.project(surf_tmp.registration)
 
         if "rh" in hemi and fracs_tmp.size > 1:
             with tempfile.TemporaryDirectory() as tmpdirname:
@@ -877,7 +877,7 @@ def _predict_on_sub(
                     )
 
                 # Next map it to the subject
-                fracs_on_rh_sub = fsavg.spherical_registration.resample(fracs_on_rh)
+                fracs_on_rh_sub = fsavg.registration.resample(fracs_on_rh)
                 # Set the prediction up
                 tmp_dict = {}
                 tmp_dict[method] = fracs_on_rh_sub
@@ -894,7 +894,7 @@ def _predict_on_sub(
                 )
                 error_subject = inf_thickness_true - inf_thickness_estimated
                 # Map back to fsaverage space and to the left hemi
-                error_fsav_rh = surf_tmp.spherical_registration.resample(error_subject)
+                error_fsav_rh = surf_tmp.registration.resample(error_subject)
                 overlay = nib.freesurfer.mghformat.MGHImage(
                     error_fsav_rh.astype("float32"), np.eye(4)
                 )
@@ -918,7 +918,7 @@ def _predict_on_sub(
 
         elif "lh" in hemi and fracs_tmp.size > 1:
             # No need to map to rh here
-            fracs_on_lh_sub = fsavg.spherical_registration.resample(fracs_tmp).squeeze()
+            fracs_on_lh_sub = fsavg.registration.resample(fracs_tmp).squeeze()
             tmp_dict = {}
             tmp_dict[method] = fracs_on_lh_sub
             surf_tmp.infra_supra_model = tmp_dict
@@ -933,7 +933,7 @@ def _predict_on_sub(
                 surf_tmp.white.vertices, inf_prediction_tmp[method]
             )
             error_subject = inf_thickness_true - inf_thickness_estimated
-            error_fsav = surf_tmp.spherical_registration.resample(error_subject)
+            error_fsav = surf_tmp.registration.resample(error_subject)
 
             if 0:
                 debug_save_path = Path(
@@ -972,12 +972,12 @@ def _predict_on_sub(
                 )
             error_subject = inf_thickness_true - inf_thickness_estimated
             if "lh" in hemi:
-                error_fsav = surf_tmp.spherical_registration.resample(error_subject)
+                error_fsav = surf_tmp.registration.resample(error_subject)
             else:
                 with tempfile.TemporaryDirectory() as tmpdirname:
                     # Map back to fsaverage space and to the left hemi
                     tmpdir = Path(tmpdirname)
-                    error_fsav_rh = surf_tmp.spherical_registration.resample(
+                    error_fsav_rh = surf_tmp.registration.resample(
                         error_subject
                     )
                     overlay = nib.freesurfer.mghformat.MGHImage(
@@ -1457,11 +1457,14 @@ if __name__ == "__main__":
     fsav = Hemisphere.from_freesurfer_subject_dir(fsav_path, "lh")
 
     smooth_steps_surf = 5
-    smooth_steps_curv = 20
-    surf_data_folder = Path(
-        f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
-    )
+    smooth_steps_curv = 0
+    # surf_data_folder = Path(
+    #     f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
+    # )
 
+    surf_data_folder = Path(
+        f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/new_cortech_test/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
+    )
     if "josa" in str(surf_data_folder):
         sphere_reg_name = "josa.sphere.reg"
     else:

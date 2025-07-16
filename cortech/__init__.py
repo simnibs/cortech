@@ -1,2 +1,4 @@
-from cortech.surface import Surface
-from cortech.cortex import Cortex, Hemisphere, SphericalRegistration
+from cortech.surface import Sphere, Surface
+from cortech.cortex import Cortex, Hemisphere
+
+__all__ = ["Cortex", "Hemisphere", "Sphere", "Surface"]
