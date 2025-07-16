@@ -122,6 +122,11 @@ class Surface:
     def as_mesh(self):
         return self.vertices[self.faces]
 
+    def new_from(self, vertices, faces: npt.NDArray | None = None):
+        """Return a new Surface object based on self but with `vertices` instead."""
+        faces = self.faces if faces is None else faces
+        return Surface(vertices, faces, self.space, self.geometry, self.edge_pairs)
+
     def bounding_box(self):
         return np.stack((self.vertices.min(0), self.vertices.max(0)))
 
@@ -613,7 +618,7 @@ class Surface:
 
     def convex_hull(self):
         v, f = cortech.cgal.convex_hull_3.convex_hull(self.vertices)
-        return Surface(v, f, self.space, self.geometry, self.edge_pairs)
+        return self.new_from(v, f)
 
     def remove_self_intersections(self, inplace: bool = False):
         """Remove self-intersections. This process includes smoothing and
@@ -624,7 +629,7 @@ class Surface:
             self.vertices = v
             self.faces = f
         else:
-            return Surface(v, f)
+            return self.new_from(v, f)
 
     def self_intersections(self):
         """Compute intersecting pairs of triangles."""
@@ -639,7 +644,8 @@ class Surface:
         if inplace:
             self.vertices = v
             self.faces = f
-        return v, f
+        else:
+            return self.new_from(v, f)
 
     def points_inside_surface(self, points, on_boundary_is_inside: bool = True):
         """For each point in `points`, test it is inside the surface or not."""
@@ -651,25 +657,13 @@ class Surface:
         v = pmp.smooth_angle_and_area(self.vertices, self.faces, **kwargs)
         if inplace:
             self.vertices = v
-        return v
-
-    def smooth_gaussian(
-        self,
-        arr: npt.NDArray | None = None,
-        a: float = 0.6,
-        n_iter: int = 1,
-        inplace: bool = False,
-    ):
-        """Perform a number of Gaussian (Laplacian) smoothing steps."""
-        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
-        for _ in range(n_iter):
-            arr = self._smooth_gaussian_step(arr, a, A, nn, out)
-        return arr
+        else:
+            return self.new_from(v)
 
     def _smooth_gaussian_prepare(
         self, arr: npt.NDArray | None = None, inplace: bool = False
     ) -> tuple[npt.NDArray, scipy.sparse.csr_array, npt.NDArray, npt.NDArray | None]:
-        """Precompute a few things needs when applying Gaussian smoothing
+        """Precompute a few things needed when applying Gaussian smoothing
         steps.
 
         nn:
@@ -714,6 +708,21 @@ class Surface:
             out += a * (A @ x / nn - x)
             return out
 
+    def smooth_gaussian(
+        self,
+        arr: npt.NDArray | None = None,
+        a: float = 0.33,
+        n_iter: int = 1,
+        inplace: bool = False,
+    ):
+        """Perform a number of Gaussian (Laplacian) smoothing steps."""
+        smooth_vertices = arr is None
+        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
+        for _ in range(n_iter):
+            arr = self._smooth_gaussian_step(arr, a, A, nn, out)
+        if smooth_vertices and not inplace:
+            return self.new_from(arr)
+
     def smooth_shape(
         self,
         constrained_vertices: npt.NDArray | None = None,
@@ -742,7 +751,34 @@ class Surface:
         )
         if inplace:
             self.vertices = v
-        return v
+        else:
+            return self.new_from(v)
+
+    def smooth_taubin(
+        self,
+        arr: npt.NDArray | None = None,
+        a: float = 0.33,
+        b: float = -0.34,
+        n_iter: int = 1,
+        inplace: bool = False,
+    ):
+        """Perform Taubin smoothing, i.e., a positive (standard) Gaussian
+        smoothing step (`a`) followed by a Gaussian step with negative weight
+        (`b`).
+
+        References
+        ----------
+        https://graphics.stanford.edu/courses/cs468-01-fall/Papers/taubin-smoothing.pdf
+        """
+        assert 0 < a < -b, "a should be between 0 and -b."
+        smooth_vertices = arr is None
+        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
+        for _ in range(n_iter):
+            arr = self._smooth_gaussian_step(arr, a, A, nn, out)  # Gauss step
+            arr = self._smooth_gaussian_step(arr, b, A, nn, out)  # Taubin step
+
+        if smooth_vertices and not inplace:
+            return self.new_from(arr)
 
     def tangential_relaxation(
         self,
@@ -771,30 +807,8 @@ class Surface:
         )
         if inplace:
             self.vertices = v
-        return v
-
-    def smooth_taubin(
-        self,
-        arr: npt.NDArray | None = None,
-        a: float = 0.6,
-        b: float = -0.61,
-        n_iter: int = 1,
-        inplace: bool = False,
-    ):
-        """Perform Taubin smoothing, i.e., a positive (standard) Gaussian
-        smoothing step (`a`) followed by a Gaussian step with negative weight
-        (`b`).
-
-        References
-        ----------
-        https://graphics.stanford.edu/courses/cs468-01-fall/Papers/taubin-smoothing.pdf
-        """
-        assert 0 < a < -b, "a should be between 0 and -b."
-        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
-        for _ in range(n_iter):
-            arr = self._smooth_gaussian_step(arr, a, A, nn, out)  # Gauss step
-            arr = self._smooth_gaussian_step(arr, b, A, nn, out)  # Taubin step
-        return arr
+        else:
+            return self.new_from(v)
 
     def get_triangle_neighbors(self):
         """For each point get its neighboring triangles (i.e., the triangles to
@@ -1283,11 +1297,13 @@ class Surface:
 
     @classmethod
     def from_freesurfer_subject_dir(cls, subject_dir: Path | str, surface: str):
-        if subject_dir == "fsaverage":
+        special_subjects = ("bert", "fsaverage", "fsaverage6", "fsaverage5")
+        if any(i == subject_dir for i in special_subjects):
             assert cortech.freesurfer.HAS_FREESURFER, "Could not find FREESURFER_HOME"
             subject_dir = cortech.freesurfer.HOME / "subjects" / subject_dir
 
-        filename = Path(subject_dir) / "surf" / surface
+        subject_dir = Path(subject_dir)
+        filename = subject_dir / "surf" / surface
         if filename.exists():
             return cls.from_freesurfer(filename)
         elif (filename_gii := filename.parent / f"{filename.name}.gii").exists():
