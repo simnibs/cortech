@@ -1129,7 +1129,7 @@ class Surface:
             self, scalars, mesh_kwargs=mesh_kwargs, plotter_kwargs=plotter_kwargs
         )
 
-    def save_gifti(self, filename: Path | str):
+    def as_gifti(self):
         header = None
         vol_geom = self.geometry.as_gifti_dict()
 
@@ -1157,15 +1157,14 @@ class Surface:
         )
         faces.coordsys = None
 
-        gii = nib.gifti.GiftiImage(header=header, darrays=[vertices, faces])
-        gii.to_filename(filename)
+        return nib.gifti.GiftiImage(header=header, darrays=[vertices, faces])
 
     def save(self, filename: Path | str, scalars: dict | None = None):
         filename = Path(filename)
 
         match filename.suffix:
             case ".gii":
-                self.save_gifti(filename)
+                self.as_gifti().to_filename(filename)
             case ".obj" | ".stl" | ".vtk":
                 import pyvista as pv
 
@@ -1175,7 +1174,6 @@ class Surface:
                         m[k] = v
                 m.save(filename)
             case _:
-                # nib.freesurfer.write_geometry(
                 cortech.freesurfer.write_geometry(
                     filename,
                     self.vertices,
@@ -1185,7 +1183,7 @@ class Surface:
                 )
 
     @classmethod
-    def from_gifti(cls, filename: Path | str):
+    def from_gifti(cls, filename: nib.GiftiImage | Path | str):
         """Read surface from Gifti file. Will also read the following metadata
         from FreeSurfer if present
 
@@ -1220,7 +1218,10 @@ class Surface:
         Surface :
             Instance of self.
         """
-        gii = nib.load(filename)
+        if isinstance(filename, (Path, str)):
+            gii = nib.load(filename)
+        else:
+            assert isinstance(gii, nib.GiftiImage)
         v = gii.agg_data("NIFTI_INTENT_POINTSET").astype(float)
         f = gii.agg_data("NIFTI_INTENT_TRIANGLE")
         space, geometry = cortech.freesurfer.metadata.read_metadata_gifti(gii)
