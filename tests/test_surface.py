@@ -1,10 +1,12 @@
 import copy
 
+import nibabel as nib
 import numpy as np
 import pytest
 from scipy.spatial import cKDTree
 
 from cortech.surface import Sphere, Surface
+from cortech.freesurfer import VolumeGeometry
 import cortech.utils
 
 
@@ -306,12 +308,99 @@ class TestSurface:
         np.testing.assert_allclose(d.vertices, diamond.vertices)
         np.testing.assert_allclose(d.faces, diamond.faces)
 
-    def test_from_freesurfer_subject_dir(self):
-        pass
+
+class TestSurfaceIO:
+    def test_from_freesurfer(self, BERT_DIR):
+        s = Surface.from_freesurfer(BERT_DIR / "surf" / "lh.white")
+        assert s.n_vertices == 2562
+        assert s.n_faces == 5120
+
+    def test_from_gifti(self, BERT_DIR):
+        s = Surface.from_gifti(BERT_DIR / "surf" / "lh.white.gii")
+        assert s.n_vertices == 2562
+        assert s.n_faces == 5120
+
+    @pytest.mark.skip
+    def test_from_vtk(self, BERT_DIR):
+        s = Surface.from_vtk(BERT_DIR / "surf" / "lh.white.vtk")
+        assert s.n_vertices == 2562
+        assert s.n_faces == 5120
+
+    def test_from_freesurfer_subject_dir(self, BERT_DIR):
+        s = Surface.from_freesurfer_subject_dir(BERT_DIR, "lh.white")
+        assert s.n_vertices == 2562
+        assert s.n_faces == 5120
+
+    @pytest.mark.parametrize("filename", ["lh.white", "lh.pial"])
+    def test_from_file(self, BERT_DIR, filename):
+        s0 = Surface.from_file(BERT_DIR / "surf" / filename)
+        s1 = Surface.from_freesurfer(BERT_DIR / "surf" / filename)
+        np.testing.assert_allclose(s0.vertices, s1.vertices)
+        np.testing.assert_allclose(s0.faces, s1.faces)
+
+    def test_read_dataspace(self, BERT_DIR):
+        s_tkr = Surface.from_file(BERT_DIR / "surf" / "lh.white")
+        s_ras = Surface.from_file(BERT_DIR / "surf" / "lh.white.scanner")
+
+        assert s_tkr.is_surface_ras()
+        assert s_ras.is_scanner_ras()
+        assert not np.allclose(s_tkr.vertices, s_ras.vertices)
+
+    def test_read_vol_geom(self, BERT_DIR, VOL_GEOM):
+        s = Surface.from_file(BERT_DIR / "surf" / "lh.white")
+
+        assert s.geometry.valid
+        assert s.geometry.filename == VOL_GEOM["filename"]
+        np.testing.assert_allclose(s.geometry.volume, VOL_GEOM["volume"])
+        np.testing.assert_allclose(s.geometry.voxelsize, VOL_GEOM["voxelsize"])
+        np.testing.assert_allclose(
+            s.geometry.cras, VOL_GEOM["cras"], rtol=1e-5, atol=1e-5
+        )
+        np.testing.assert_allclose(s.geometry.cosines, VOL_GEOM["cosines"])
+
+    def test_read_vol_geom_gifti(self, BERT_DIR):
+        sfs = Surface.from_file(BERT_DIR / "surf" / "lh.white")
+        sgii = Surface.from_file(BERT_DIR / "surf" / "lh.white.gii")
+
+        assert sfs.geometry.valid == sgii.geometry.valid
+        assert sfs.geometry.filename == sgii.geometry.filename
+        np.testing.assert_allclose(sfs.geometry.volume, sgii.geometry.volume)
+        np.testing.assert_allclose(sfs.geometry.voxelsize, sgii.geometry.voxelsize)
+        np.testing.assert_allclose(
+            sfs.geometry.cras, sgii.geometry.cras, rtol=1e-5, atol=1e-5
+        )
+        np.testing.assert_allclose(sfs.geometry.cosines, sgii.geometry.cosines)
+
+    def test_read_vol_geom_invalid(self, BERT_DIR):
+        s = Surface.from_file(BERT_DIR / "surf" / "lh.white.no_volgeom")
+        assert not s.geometry.valid
+
+    @pytest.mark.parametrize("space", ["scanner", "surface"])
+    def test_to_surface_ras(self, diamond_vertices, diamond_faces, space):
+        """Test conversion of coordinates to scanner/surface ras."""
+        geom = VolumeGeometry(
+            valid=True,
+            cosines=[[-1, 0, 0], [0, 0, 1], [0, -1, 0]],
+            cras=[10.0, 5.0, 0.0],
+        )
+        ras2tkr = geom.get_affine("tkr", fr="scanner")
+        diamond_vertices_tkr = nib.affines.apply_affine(ras2tkr, diamond_vertices)
+
+        s_ras = Surface(diamond_vertices, diamond_faces, "scanner", geom)
+        s_tkr = Surface(diamond_vertices_tkr, diamond_faces, "surface", geom)
+
+        assert not np.allclose(s_ras.vertices, s_tkr.vertices)
+
+        match space:
+            case "scanner":
+                s_tkr.to_scanner_ras()
+            case "surface":
+                s_ras.to_surface_ras()
+        np.testing.assert_allclose(s_ras.vertices, s_tkr.vertices)
 
 
 @pytest.mark.parametrize("method", ["nearest", "linear"])
-class TestSphericalRegistration:
+class TestSphere:
     def test_project_and_resample(self, sphere_reg, method):
         # Project 'source_field' defined on 'fibonacci_sphere' to dest_points.
         rng = np.random.default_rng(0)

@@ -8,7 +8,7 @@ import cortech.utils
 @pytest.mark.parametrize("arr", [np.array(1.0), np.array([[1.0]])])
 @pytest.mark.parametrize("n", [2, 4])
 def test_atleast_nd(arr, n):
-    x = cortech.utils.atleast_nd(arr, n)
+    x = cortech.utils.atleast_nd_append(arr, n)
     assert x.ndim == n
 
 

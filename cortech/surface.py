@@ -67,14 +67,14 @@ class Surface:
         self,
         vertices: npt.NDArray,
         faces: npt.NDArray,
-        space: str = "scanner ras",
+        space: str = "scanner",
         geometry: dict | cortech.freesurfer.VolumeGeometry | None = None,
         edge_pairs: npt.NDArray | None = None,
     ) -> None:
         """Class for representing a triangulated surface."""
         self.vertices = vertices
         self.faces = faces
-        assert space in {"scanner ras", "surface ras"}
+        assert space in {"scanner", "surface"}
         self.space = space
 
         if isinstance(geometry, dict):
@@ -1108,10 +1108,10 @@ class Surface:
     #     self.vertices = np.concatenate((self.vertices, other.vertices))
 
     def is_surface_ras(self):
-        return self.space == "surface ras"
+        return self.space == "surface"
 
     def is_scanner_ras(self):
-        return self.space == "scanner ras"
+        return self.space == "scanner"
 
     def to_scanner_ras(self, *, inplace: bool = True):
         if self.is_surface_ras():
@@ -1119,18 +1119,18 @@ class Surface:
             v = nib.affines.apply_affine(trans, self.vertices)
             if inplace:
                 self.vertices = v
-                self.space = "scanner ras"
+                self.space = "scanner"
         else:
             v = self.vertices
         return v
 
     def to_surface_ras(self, *, inplace: bool = True):
-        if self.space == "scanner ras":
+        if self.space == "scanner":
             trans = self.geometry.get_affine("tkr", fr="scanner")
             v = nib.affines.apply_affine(trans, self.vertices)
             if inplace:
                 self.vertices = v
-                self.space = "surface ras"
+                self.space = "surface"
         else:
             v = self.vertices
         return v
@@ -1235,6 +1235,7 @@ class Surface:
         if isinstance(filename, (Path, str)):
             gii = nib.load(filename)
         else:
+            gii = filename
             assert isinstance(gii, nib.GiftiImage)
         v = gii.agg_data("NIFTI_INTENT_POINTSET").astype(float)
         f = gii.agg_data("NIFTI_INTENT_TRIANGLE")
@@ -1258,7 +1259,7 @@ class Surface:
 
         """
         v, f, m = cortech.freesurfer.read_geometry(filename, read_metadata=True)
-        space = "scanner ras" if m.real_ras else "surface ras"
+        space = "scanner" if m.real_ras else "surface"
         geometry = cortech.freesurfer.VolumeGeometry(**m.vol_geom)
         return cls(v, f, space, geometry)
 
@@ -1278,7 +1279,7 @@ class Surface:
         """
         import pyvista as pv
 
-        m = pv.load(filename)
+        m = pv.read(filename)
         return cls(m.points, m.faces.reshape(-1, 4)[:, 1:])
 
     @classmethod
@@ -1312,6 +1313,25 @@ class Surface:
             raise ValueError(
                 f"Unable to find {surface} in {subject_dir}. Tried {filename} and {filename_gii}."
             )
+
+class MultiSurface(Surface):
+    @property
+    def vertices(self):
+        return self._vertices
+
+    @vertices.setter
+    def vertices(self, value):
+        value = cortech.utils.atleast_nd_prepend(value, 3)
+        assert value.ndim == 3
+        self._vertices = value
+        self.n_vertices, self.n_dim = value.shape
+
+    def as_mesh(self):
+        return self.vertices[:, self.faces]
+
+    def bounding_box(self):
+        return np.stack((self.vertices.min((0, 1)), self.vertices.max((0, 1))))
+
 
 class Sphere(Surface):
     def __init__(self, *args, normalize: bool = True, **kwargs) -> None:

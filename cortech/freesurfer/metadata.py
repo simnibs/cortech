@@ -36,8 +36,9 @@ class VolumeGeometry:
                 xras = np.array([-1.0, 0.0, 0.0])
                 yras = np.array([0.0, 0.0, -1.0])
                 zras = np.array([0.0, 1.0, 0.0])
-            cosines = self._cosines_from_xyz(xras, yras, zras)
-        self.cosines = cosines
+            self.cosines = self._cosines_from_xyz(xras, yras, zras)
+        else:
+            self.cosines = cosines
 
         if cras is None:
             if self.valid:
@@ -214,20 +215,22 @@ def read_metadata_gifti(gii: nib.GiftiImage):
     match nii_code:
         case "NIFTI_XFORM_UNKNOWN":
             # assert xformspace == "NIFTI_XFORM_SCANNER_ANAT"
-            space = "surface ras"
+            space = "surface"
         case "NIFTI_XFORM_SCANNER_ANAT":
             # assert xformspace == "NIFTI_XFORM_UNKNOWN"
-            space = "scanner ras"
+            space = "scanner"
         case _:
             raise ValueError(f"Unknown dataspace {nii_code}")
 
-    # Read volume geometry
+    # Read the volume geometry
     m = vertices.meta
     n_fields = 0
     vol_geom = {}
+
     if "VolGeomFname" in m:
         vol_geom["filename"] = m["VolGeomFname"]
         n_fields += 1
+
     try:
         vol_geom["volume"] = np.array(
             [int(m[f"VolGeom{k}"]) for k in ("Width", "Height", "Depth")]
@@ -235,6 +238,7 @@ def read_metadata_gifti(gii: nib.GiftiImage):
         n_fields += 3
     except KeyError:
         pass
+
     try:
         vol_geom["voxelsize"] = np.array(
             [float(m[f"VolGeom{k}size"]) for k in ("X", "Y", "Z")]
@@ -242,14 +246,15 @@ def read_metadata_gifti(gii: nib.GiftiImage):
         n_fields += 3
     except KeyError:
         pass
-    for i in "XYZC":
-        try:
+
+    try:
+        for i in "XYZC":
             vol_geom[f"{i.lower()}ras"] = np.array(
                 [float(m[f"VolGeom{i}_{k}"]) for k in "RAS"]
             )
-            n_fields += 12
-        except KeyError:
-            pass
+        n_fields += 12
+    except KeyError:
+        pass
 
     # This is how validity of the volume geometry is determined in FreeSurfer
     # when reading a gifti file
