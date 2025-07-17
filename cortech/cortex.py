@@ -207,7 +207,7 @@ class Hemisphere:
 
         return dist_frac.squeeze()
 
-    def fit_infra_supra_border(self, curv_args=None):
+    def fit_infra_supra_border(self, curv_args=None, return_surface=False):
         """Fit the infra supra border using models fitted from ex-vivo data.
 
         Parameters
@@ -233,11 +233,15 @@ class Hemisphere:
             if "equivolume" in model:
                 if self.infra_supra_model[model].size > 1 and not self.infra_supra_model[model].shape[0]==1:
                     self.infra_supra_model[model] = np.expand_dims(self.infra_supra_model[model], axis=0)
-                surfaces[model] = self.estimate_layers(method="equivolume", frac=self.infra_supra_model[model], thickness=thickness, curv=curv.H)
+                surfaces[model] = self.estimate_layers(method="equivolume", frac=self.infra_supra_model[model], thickness=thickness, curv=curv.H, return_surface=return_surface)
             elif "equidistance" in model:
-                surfaces[model] = self.estimate_layers(method="equidistance", frac=self.infra_supra_model[model])
+                surfaces[model] = self.estimate_layers(method="equidistance", frac=self.infra_supra_model[model], return_surface=return_surface)
             elif "linear" in model:
-                surfaces[model] = self._predict_linear_model(self.infra_supra_model[model], curv)
+                surf_tmp = self._predict_linear_model(self.infra_supra_model[model], curv)
+                if return_surface:
+                    surfaces[model] = self.white.new_from(surf_tmp)
+                else:
+                    surfaces[model] = surf_tmp
             else:
                 print("Unknown model!")
 
@@ -440,8 +444,7 @@ class Hemisphere:
                 registration='sphere.reg'
 
             fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", hemi, registration=registration)
-            fsavg.registration.compute_projection(reg_surf)
-            number_of_nodes = white.n_vertices
+            fsavg.registration.project(reg_surf)
             for model_type in infra_supra_model_type_and_path.keys():
                 if "equivolume" in model_type or "equidistance" in model_type:
                     if "global" in model_type:
@@ -450,7 +453,7 @@ class Hemisphere:
                     elif "local" in model_type:
                         local_frac_im = nib.load(infra_supra_model_type_and_path[model_type])
                         local_frac_fsav = local_frac_im.get_fdata().squeeze()
-                        local_frac = fsavg.registration.project_and_resample(local_frac_fsav)
+                        local_frac = fsavg.registration.resample(local_frac_fsav)
                         infra_supra_model[model_type] = local_frac
                 elif "linear" in model_type:
                     # NOTE: for the linear model the order matters! I'll keep it general now,
@@ -465,7 +468,7 @@ class Hemisphere:
                         parameters_fsav.append(param_tmp)
 
                     parameters_fsav = np.array(parameters_fsav).transpose()
-                    parameters = fsavg.registration.project_and_resample(parameters_fsav)
+                    parameters = fsavg.registration.resample(parameters_fsav)
                     infra_supra_model[model_type] = parameters
 
             if not infra_supra_model:
