@@ -1,5 +1,4 @@
 from collections import OrderedDict
-import warnings
 
 import nibabel as nib
 import numpy as np
@@ -10,7 +9,7 @@ class VolumeGeometry:
     def __init__(
         self,
         valid: bool,
-        filename: str,
+        filename: str | None = None,
         volume: npt.ArrayLike | None = None,
         voxelsize: npt.ArrayLike | None = None,
         xras: npt.ArrayLike | None = None,
@@ -20,9 +19,11 @@ class VolumeGeometry:
         cosines: npt.ArrayLike | None = None,
     ):
         """FreeSurfer volume geometry information."""
-        assert valid in {False, True}
+        assert valid in {False, True}, f"`valid` must be True or False (got {valid})"
         self.valid = valid
         self.filename = filename
+        if self.filename is not None:
+            assert isinstance(self.filename, str)
         self.volume = volume
         self.voxelsize = voxelsize
 
@@ -47,6 +48,13 @@ class VolumeGeometry:
         self.cras = np.asarray(cras)
 
         self.tkrcosines = np.array([[-1, 0, 0], [0, 0, 1], [0, -1, 0]])
+
+        self._niistring_to_fsstring = dict(
+            NIFTI_XFORM_UNKNOWN="tkr", NIFTI_XFORM_SCANNER_ANAT="scanner"
+        )
+        self._fsstring_to_niistring = {
+            v: k for k, v in self._niistring_to_fsstring.items()
+        }
 
     @staticmethod
     def _cosines_from_xyz(xras, yras, zras) -> npt.NDArray:
@@ -124,6 +132,8 @@ class VolumeGeometry:
 
     def as_gifti_dict(self):
         d = {}
+        if self.filename is not None:
+            d["VolGeomFname"] = self.filename
         if self.volume is not None:
             d["VolGeomWidth"] = self.volume[0]
             d["VolGeomHeight"] = self.volume[1]
@@ -136,7 +146,7 @@ class VolumeGeometry:
             ras = self._xyz_from_cosines(self.cosines)
             for ax0, v in ras.items():
                 for i, ax1 in enumerate("RAS"):
-                    d[f"VolGeom{ax0.upper()}_{ax1}"] = v[i]
+                    d[f"VolGeom{ax0[0].upper()}_{ax1}"] = v[i]
         if self.cras is not None:
             for i, ax1 in enumerate("RAS"):
                 d[f"VolGeomC_{ax1}"] = v[i]
@@ -146,10 +156,9 @@ class VolumeGeometry:
         return d
 
     def as_freesurfer_dict(self):
-        d = OrderedDict(
-            valid=str(int(self.valid)),
-            filename=str(self.filename),
-        )
+        d = OrderedDict(valid=self.valid)
+        if self.filename is not None:
+            d["filename"] = self.filename
         if self.volume is not None:
             d["volume"] = self.volume
         if self.voxelsize is not None:
@@ -168,46 +177,83 @@ class VolumeGeometry:
         return cls(**inputs)
 
 
-class MetaData:
-    def __init__(
-        self,
-        real_ras: bool = True,
-        geometry: dict | VolumeGeometry | None = None,
-    ):
-        """FreeSurfer metadata."""
-        self.real_ras = real_ras
-        self.geometry = geometry
+def read_metadata_gifti(gii: nib.GiftiImage):
+    """Read metadata associated with a gifti image.
 
-    @property
-    def geometry(self):
-        return self._geometry
+    vertex_data, face_data, and extra_data should be specified as a mapping of
+    (key to read, parser) where parser is used to interpret the value found
+    in the metadata of the gifti image.
 
-    @geometry.setter
-    def geometry(self, value):
-        if isinstance(value, dict):
-            self._geometry = VolumeGeometry(**value)
-        elif isinstance(value, VolumeGeometry):
-            self._geometry = value
-        elif value is None:
-            self._geometry = VolumeGeometry(False, "")
-        else:
-            raise ValueError("Invalid geometry")
+    Parameters
+    ----------
+    gii : nib.GiftiImage
+        _description_
 
-    def is_scanner_ras(self):
-        return self.real_ras
+    Returns
+    -------
+    _type_
+        _description_
 
-    def is_surface_ras(self):
-        return not self.real_ras
+    Raises
+    ------
+    ValueError
+        _description_
+    """
 
-    # def as_freesurfer_dict(self):
-    #     meta = dict(
-    #         head=np.array(
-    #             [
-    #                 cortech.freesurfer.Tag.OLD_USEREALRAS,
-    #                 self.real_ras,
-    #                 cortech.freesurfer.Tag.OLD_SURF_GEOM,
-    #             ],
-    #             dtype=np.int32,
-    #         )
-    #     )
-    #     return meta | self.geometry.as_freesurfer_dict()
+    vertices = gii.darrays[0]
+    # faces = gii.darrays[1]
+
+    # Read real_ras
+    coordsys = vertices.coordsys
+    # We ignore these. They can be derived from the volume geometry
+    # xform = coordsys.xform
+    # xformspace = coordsys.xformspace
+    dataspace = coordsys.dataspace
+    # nib.nifti1.xform_codes.label[coordsys]
+    nii_code = nib.nifti1.xform_codes.niistring[dataspace]
+    match nii_code:
+        case "NIFTI_XFORM_UNKNOWN":
+            # assert xformspace == "NIFTI_XFORM_SCANNER_ANAT"
+            space = "surface ras"
+        case "NIFTI_XFORM_SCANNER_ANAT":
+            # assert xformspace == "NIFTI_XFORM_UNKNOWN"
+            space = "scanner ras"
+        case _:
+            raise ValueError(f"Unknown dataspace {nii_code}")
+
+    # Read volume geometry
+    m = vertices.meta
+    n_fields = 0
+    vol_geom = {}
+    if "VolGeomFname" in m:
+        vol_geom["filename"] = m["VolGeomFname"]
+        n_fields += 1
+    try:
+        vol_geom["volume"] = np.array(
+            [int(m[f"VolGeom{k}"]) for k in ("Width", "Height", "Depth")]
+        )
+        n_fields += 3
+    except KeyError:
+        pass
+    try:
+        vol_geom["voxelsize"] = np.array(
+            [float(m[f"VolGeom{k}size"]) for k in ("X", "Y", "Z")]
+        )
+        n_fields += 3
+    except KeyError:
+        pass
+    for i in "XYZC":
+        try:
+            vol_geom[f"{i.lower()}ras"] = np.array(
+                [float(m[f"VolGeom{i}_{k}"]) for k in "RAS"]
+            )
+            n_fields += 12
+        except KeyError:
+            pass
+
+    # This is how validity of the volume geometry is determined in FreeSurfer
+    # when reading a gifti file
+    # https://github.com/freesurfer/freesurfer/blob/920f33cade45b901f702192ace64b37ef2c4b3e1/utils/gifti.cpp#L645
+    vol_geom["valid"] = n_fields == 19
+
+    return space, VolumeGeometry(**vol_geom)
