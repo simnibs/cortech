@@ -4,11 +4,18 @@ import numpy as np
 import numpy.typing as npt
 
 
-def atleast_nd(arr, n):
+def atleast_nd_append(arr, n):
     if arr.ndim == n:
         return arr
     else:
-        return atleast_nd(arr[..., None], n)
+        return atleast_nd_append(arr[..., None], n)
+
+
+def atleast_nd_prepend(arr, n):
+    if arr.ndim == n:
+        return arr
+    else:
+        return atleast_nd_prepend(arr[None], n)
 
 
 def sliced_argmin(x: npt.NDArray, indptr: npt.NDArray):
