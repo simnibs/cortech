@@ -422,7 +422,7 @@ class Hemisphere:
             sphere_surf = None
         else:
             sphere_surf = Sphere.from_freesurfer_subject_dir(
-                sub_dir, f"{hemi}.{registration}"
+                sub_dir, f"{hemi}.{sphere}"
             )
 
         # spherical registration
