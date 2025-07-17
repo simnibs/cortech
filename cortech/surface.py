@@ -1235,6 +1235,7 @@ class Surface:
         if isinstance(filename, (Path, str)):
             gii = nib.load(filename)
         else:
+            gii = filename
             assert isinstance(gii, nib.GiftiImage)
         v = gii.agg_data("NIFTI_INTENT_POINTSET").astype(float)
         f = gii.agg_data("NIFTI_INTENT_TRIANGLE")
@@ -1278,7 +1279,7 @@ class Surface:
         """
         import pyvista as pv
 
-        m = pv.load(filename)
+        m = pv.read(filename)
         return cls(m.points, m.faces.reshape(-1, 4)[:, 1:])
 
     @classmethod
@@ -1312,6 +1313,25 @@ class Surface:
             raise ValueError(
                 f"Unable to find {surface} in {subject_dir}. Tried {filename} and {filename_gii}."
             )
+
+
+class MultiSurface(Surface):
+    @property
+    def vertices(self):
+        return self._vertices
+
+    @vertices.setter
+    def vertices(self, value):
+        value = cortech.utils.atleast_nd_prepend(value, 3)
+        assert value.ndim == 3
+        self._vertices = value
+        self.n_vertices, self.n_dim = value.shape
+
+    def as_mesh(self):
+        return self.vertices[:, self.faces]
+
+    def bounding_box(self):
+        return np.stack((self.vertices.min((0, 1)), self.vertices.max((0, 1))))
 
 
 class Sphere(Surface):

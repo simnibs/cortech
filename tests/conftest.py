@@ -1,7 +1,49 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
 from cortech.sphere import fibonacci_points, fibonacci_sphere
+
+
+@pytest.fixture(name="BERT_DIR", scope="class")
+def bert_dir():
+    return Path(__file__).parent / "data" / "bert_resampled"
+
+
+@pytest.fixture(name="VOL_GEOM", scope="class")
+def volume_geometry():
+    """Volume geometry extracted for lh.white"""
+    xras = np.array([-1.0000, 0.0000, 0.0000])
+    yras = np.array([0.0000, 0.0000, -1.0000])
+    zras = np.array([0.0000, 1.0000, 0.0000])
+    return dict(
+        valid=True,
+        filename="/mnt/depot64/freesurfer/freesurfer.7.4.0/subjects/bert/mri/wm.mgz",
+        volume=np.array([256, 256, 256]),
+        voxelsize=np.array([1.0000, 1.0000, 1.0000]),
+        xras=xras,
+        yras=yras,
+        zras=zras,
+        cras=np.array([5.3997, 18.0000, 0.0000]),
+        cosines=np.column_stack((xras, yras, zras)),
+        vox2ras=np.array(
+            [
+                [-1.00000, 0.00000, 0.00000, 133.39972],
+                [0.00000, 0.00000, 1.00000, -110.00000],
+                [0.00000, -1.00000, 0.00000, 128.00000],
+                [0.00000, 0.00000, 0.00000, 1.00000],
+            ]
+        ),
+        vox2ras_tkr=np.array(
+            [
+                [-1.00000, 0.00000, 0.00000, 128.00000],
+                [0.00000, 0.00000, 1.00000, -128.00000],
+                [0.00000, -1.00000, 0.00000, 128.00000],
+                [0.00000, 0.00000, 0.00000, 1.00000],
+            ]
+        ),
+    )
 
 
 @pytest.fixture(scope="module")

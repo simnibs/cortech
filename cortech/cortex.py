@@ -193,7 +193,7 @@ class Hemisphere:
         elif f.ndim == 2:
             fd2 = f.shape[1]
             assert fd2 == 1 or fd2 == self.white.n_vertices
-        f = cortech.utils.atleast_nd(f, 3)
+        f = cortech.utils.atleast_nd_append(f, 3)
         return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
 
     def estimate_layers(
@@ -203,6 +203,7 @@ class Hemisphere:
         thickness: npt.NDArray | None = None,
         curv: str | npt.NDArray = "H",
         curv_kwargs: dict | None = None,
+        return_surface: bool = False,
     ):
         """Estimate layers at `frac`. Given an estimate of the thickness at
         each vertex (and, for the equivolume model a curvature estimate),
@@ -233,7 +234,7 @@ class Hemisphere:
         Returns
         -------
         Position of vertices at the desired (distance or volume) fractions
-        (n_vertices, n_frac).
+        (n_frac, n_vertices, 3).
 
         """
         if method in {"equidistance", "equivolume"}:
@@ -252,9 +253,15 @@ class Hemisphere:
                     frac = self.compute_equivolume_fraction(thickness, curv, frac)
                 case "equidistance":
                     pass
-            return self._layer_from_distance_fraction(frac)
+            layers = self._layer_from_distance_fraction(frac)
+            if return_surface:
+                if layers.ndim == 2:
+                    layers = self.white.new_from(layers)
+                else:
+                    layers = tuple(self.white.new_from(v) for v in layers)
+            return layers
         elif method == "laplace":
-            return
+            raise NotImplementedError
 
     @classmethod
     def from_freesurfer_subject_dir(
