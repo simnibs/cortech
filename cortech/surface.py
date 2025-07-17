@@ -67,14 +67,14 @@ class Surface:
         self,
         vertices: npt.NDArray,
         faces: npt.NDArray,
-        space: str = "scanner ras",
+        space: str = "scanner",
         geometry: dict | cortech.freesurfer.VolumeGeometry | None = None,
         edge_pairs: npt.NDArray | None = None,
     ) -> None:
         """Class for representing a triangulated surface."""
         self.vertices = vertices
         self.faces = faces
-        assert space in {"scanner ras", "surface ras"}
+        assert space in {"scanner", "surface"}
         self.space = space
 
         if isinstance(geometry, dict):
@@ -1108,10 +1108,10 @@ class Surface:
     #     self.vertices = np.concatenate((self.vertices, other.vertices))
 
     def is_surface_ras(self):
-        return self.space == "surface ras"
+        return self.space == "surface"
 
     def is_scanner_ras(self):
-        return self.space == "scanner ras"
+        return self.space == "scanner"
 
     def to_scanner_ras(self, *, inplace: bool = True):
         if self.is_surface_ras():
@@ -1119,18 +1119,18 @@ class Surface:
             v = nib.affines.apply_affine(trans, self.vertices)
             if inplace:
                 self.vertices = v
-                self.space = "scanner ras"
+                self.space = "scanner"
         else:
             v = self.vertices
         return v
 
     def to_surface_ras(self, *, inplace: bool = True):
-        if self.space == "scanner ras":
+        if self.space == "scanner":
             trans = self.geometry.get_affine("tkr", fr="scanner")
             v = nib.affines.apply_affine(trans, self.vertices)
             if inplace:
                 self.vertices = v
-                self.space = "surface ras"
+                self.space = "surface"
         else:
             v = self.vertices
         return v
@@ -1259,7 +1259,7 @@ class Surface:
 
         """
         v, f, m = cortech.freesurfer.read_geometry(filename, read_metadata=True)
-        space = "scanner ras" if m.real_ras else "surface ras"
+        space = "scanner" if m.real_ras else "surface"
         geometry = cortech.freesurfer.VolumeGeometry(**m.vol_geom)
         return cls(v, f, space, geometry)
 

@@ -215,10 +215,10 @@ def read_metadata_gifti(gii: nib.GiftiImage):
     match nii_code:
         case "NIFTI_XFORM_UNKNOWN":
             # assert xformspace == "NIFTI_XFORM_SCANNER_ANAT"
-            space = "surface ras"
+            space = "surface"
         case "NIFTI_XFORM_SCANNER_ANAT":
             # assert xformspace == "NIFTI_XFORM_UNKNOWN"
-            space = "scanner ras"
+            space = "scanner"
         case _:
             raise ValueError(f"Unknown dataspace {nii_code}")
 

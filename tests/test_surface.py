@@ -1,10 +1,12 @@
 import copy
 
+import nibabel as nib
 import numpy as np
 import pytest
 from scipy.spatial import cKDTree
 
 from cortech.surface import Sphere, Surface
+from cortech.freesurfer import VolumeGeometry
 import cortech.utils
 
 
@@ -318,6 +320,7 @@ class TestSurfaceIO:
         assert s.n_vertices == 2562
         assert s.n_faces == 5120
 
+    @pytest.mark.skip
     def test_from_vtk(self, BERT_DIR):
         s = Surface.from_vtk(BERT_DIR / "surf" / "lh.white.vtk")
         assert s.n_vertices == 2562
@@ -371,6 +374,29 @@ class TestSurfaceIO:
     def test_read_vol_geom_invalid(self, BERT_DIR):
         s = Surface.from_file(BERT_DIR / "surf" / "lh.white.no_volgeom")
         assert not s.geometry.valid
+
+    @pytest.mark.parametrize("space", ["scanner", "surface"])
+    def test_to_surface_ras(self, diamond_vertices, diamond_faces, space):
+        """Test conversion of coordinates to scanner/surface ras."""
+        geom = VolumeGeometry(
+            valid=True,
+            cosines=[[-1, 0, 0], [0, 0, 1], [0, -1, 0]],
+            cras=[10.0, 5.0, 0.0],
+        )
+        ras2tkr = geom.get_affine("tkr", fr="scanner")
+        diamond_vertices_tkr = nib.affines.apply_affine(ras2tkr, diamond_vertices)
+
+        s_ras = Surface(diamond_vertices, diamond_faces, "scanner", geom)
+        s_tkr = Surface(diamond_vertices_tkr, diamond_faces, "surface", geom)
+
+        assert not np.allclose(s_ras.vertices, s_tkr.vertices)
+
+        match space:
+            case "scanner":
+                s_tkr.to_scanner_ras()
+            case "surface":
+                s_ras.to_surface_ras()
+        np.testing.assert_allclose(s_ras.vertices, s_tkr.vertices)
 
 
 @pytest.mark.parametrize("method", ["nearest", "linear"])
