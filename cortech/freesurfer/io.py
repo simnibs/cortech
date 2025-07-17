@@ -129,7 +129,7 @@ def _write_vol_geom_old(fobj, volume_info):
         if key == "valid":
             val = volume_info[key]
             fobj.write(f"{key} = {int(val):d}\n".encode())
-        if key == "filename":
+        elif key == "filename":
             val = volume_info[key]
             fobj.write(f"{key} = {val:s}\n".encode())
         elif key == "volume":
