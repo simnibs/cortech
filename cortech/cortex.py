@@ -46,7 +46,7 @@ class Hemisphere:
         if self.inf is not None:
             self._surfaces.append(self.inf)
 
-    def has_spherical_registration(self):
+    def has_registration(self):
         return self.registration is not None
 
     def has_infra_supra_model(self):
@@ -406,6 +406,7 @@ class Hemisphere:
                     sub_dir, f"{hemi}.{pial}.T1"
                 )
 
+        # spherical representation
         if sphere is None:
             sphere_surf = None
         else:
@@ -413,7 +414,7 @@ class Hemisphere:
                 sub_dir, f"{hemi}.{registration}"
             )
 
-
+        # spherical registration
         if registration is None:
             reg_surf = None
         else:

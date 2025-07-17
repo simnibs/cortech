@@ -837,7 +837,7 @@ def _predict_on_sub(
         )
         surf_tmp.white.smooth_taubin(n_iter=smooth_steps_surf, inplace=True)
         surf_tmp.pial.smooth_taubin(n_iter=smooth_steps_surf, inplace=True)
-        fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", h, registration=sphere_reg_name)
+        fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", h, registration='sphere.reg')
         surf_tmp.registration.project(fsavg.registration)
         fsavg.registration.project(surf_tmp.registration)
 
@@ -1342,7 +1342,7 @@ def main(
     """
 
     # Before fitting the models, let's map all the single right hemi results to the left hemi
-    _map_rh_to_lh(surf_data_folder, fsav_path)
+    # _map_rh_to_lh(surf_data_folder, fsav_path)
 
     # Okay start out by fitting the linear model
 
@@ -1358,7 +1358,7 @@ def main(
     # Run leave-one-out cross-validation for linear model
 
     out_files = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
-    outpath = data_path / "linear_model_test_prediction"
+    outpath = data_path / "linear_model_prediction_NEW_CORTECH"
 
     _cv_linear_fit(
         predictors,
@@ -1379,7 +1379,7 @@ def main(
     )
 
     # # Next cross-validate the isovolume values
-    outpath = data_path / "equivolume_model_test_prediction"
+    outpath = data_path / "equivolume_model_prediction_NEW_CORTECH"
     number_of_subjects = predictors.shape[0]
 
     _cv_equivol_fit(
@@ -1396,7 +1396,7 @@ def main(
     )
 
     # # Next cross-validate the isodistance values
-    outpath = data_path / "equidistance_model_test_prediction"
+    outpath = data_path / "equidistance_model_prediction_NEW_CORTECH"
     number_of_subjects = predictors.shape[0]
     _cv_equidist_fit(
         data_path,
@@ -1458,13 +1458,13 @@ if __name__ == "__main__":
 
     smooth_steps_surf = 5
     smooth_steps_curv = 0
-    # surf_data_folder = Path(
-    #     f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
-    # )
-
     surf_data_folder = Path(
-        f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/new_cortech_test/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
+        f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
     )
+
+    # surf_data_folder = Path(
+    #     f"/mnt/projects/CORTECH/nobackup/exvivo/derivatives/exvivo_surface_analysis/new_cortech_test/smooth_step_surf_{smooth_steps_surf}_smooth_steps_curv_{smooth_steps_curv}_josa/"
+    # )
     if "josa" in str(surf_data_folder):
         sphere_reg_name = "josa.sphere.reg"
     else:
