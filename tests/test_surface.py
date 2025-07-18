@@ -431,10 +431,11 @@ class TestSurfaceSave:
         """
         s = Surface.from_file(BERT_DIR / "surf" / filename)
 
-        with tempfile.NamedTemporaryFile() as f:
-            p = Path(f.name).with_suffix(ext)
-            s.save(p)
-            t = Surface.from_file(p)
+        f = tempfile.NamedTemporaryFile(mode="w")
+        p = Path(f.name).with_suffix(ext)
+        s.save(p)
+        t = Surface.from_file(p)
+        f.close()
 
         np.testing.assert_allclose(s.vertices, t.vertices)
         np.testing.assert_allclose(s.faces, t.faces)
