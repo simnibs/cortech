@@ -12,7 +12,9 @@ import numpy as np
 
 
 global METADATA
-METADATA = namedtuple("Metadata", ["real_ras", "vol_geom"])
+METADATA = namedtuple(
+    "Metadata", ["real_ras", "vol_geom"], defaults=[True, dict(valid=False)]
+)
 
 
 # For all tags, see https://github.com/freesurfer/freesurfer/blob/dev/include/tags.h
@@ -44,7 +46,7 @@ def _read_surf_geom_old(fobj):
             case "valid":
                 vol_geom[k] = bool(int(v.split("#")[0].strip()))
             case "filename":
-                pass
+                vol_geom[k] = None if v == "" else v
             case "volume":
                 vol_geom[k] = np.asarray(v.split(), int)
             case "voxelsize" | "xras" | "yras" | "zras" | "cras":

@@ -31,7 +31,7 @@ class VolumeGeometry:
             if any([xras is None, yras is None, zras is None]):
                 if self.valid:
                     raise ValueError(
-                        "VolumeGeometry was set to as `valid` but x/y/zras was not specified."
+                        "VolumeGeometry was set to as `valid` but x/y/z ras was not specified."
                     )
                 xras = np.array([-1.0, 0.0, 0.0])
                 yras = np.array([0.0, 0.0, -1.0])
@@ -133,6 +133,10 @@ class VolumeGeometry:
 
     def as_gifti_dict(self):
         d = {}
+
+        if not self.valid:
+            return d
+
         if self.filename is not None:
             d["VolGeomFname"] = self.filename
         if self.volume is not None:
@@ -145,29 +149,27 @@ class VolumeGeometry:
             d["VolGeomZsize"] = self.voxelsize[2]
         if self.cosines is not None:
             ras = self._xyz_from_cosines(self.cosines)
-            for ax0, v in ras.items():
-                for i, ax1 in enumerate("RAS"):
-                    d[f"VolGeom{ax0[0].upper()}_{ax1}"] = v[i]
+            for ax0, v in ras.items():  # XYZ
+                for i, ax1 in zip(v, "RAS"):  # RAS
+                    d[f"VolGeom{ax0[0].upper()}_{ax1}"] = i
         if self.cras is not None:
-            for i, ax1 in enumerate("RAS"):
-                d[f"VolGeomC_{ax1}"] = v[i]
+            for v, ax1 in zip(self.cras, "RAS"):
+                d[f"VolGeomC_{ax1}"] = v
             # SurfaceCenterX = ,
             # SurfaceCenterY = ,
             # SurfaceCenterZ = ,
         return d
 
     def as_freesurfer_dict(self):
-        d = OrderedDict(valid=self.valid)
-        if self.filename is not None:
-            d["filename"] = self.filename
-        if self.volume is not None:
-            d["volume"] = self.volume
-        if self.voxelsize is not None:
-            d["voxelsize"] = self.voxelsize
-        if self.cosines is not None:
-            d |= self._xyz_from_cosines(self.cosines)
-        if self.cras is not None:
-            d["cras"] = self.cras
+        d = OrderedDict(
+            valid=self.valid,
+            filename="" if self.filename is None else self.filename,
+            volume=self.volume,
+            voxelsize=self.voxelsize,
+        )
+        d |= self._xyz_from_cosines(self.cosines)
+        d["cras"] = self.cras
+
         return d
 
     @classmethod
@@ -176,6 +178,9 @@ class VolumeGeometry:
             k.lstrip("VolGeom"): v for k, v in meta.items() if k.startswith("VolGeom")
         }
         return cls(**inputs)
+
+    # def __repr__(self):
+    #     return
 
 
 def read_metadata_gifti(gii: nib.GiftiImage):
@@ -226,6 +231,8 @@ def read_metadata_gifti(gii: nib.GiftiImage):
     m = vertices.meta
     n_fields = 0
     vol_geom = {}
+
+    print(m)
 
     if "VolGeomFname" in m:
         vol_geom["filename"] = m["VolGeomFname"]
