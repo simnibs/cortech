@@ -716,12 +716,18 @@ class Surface:
         inplace: bool = False,
     ):
         """Perform a number of Gaussian (Laplacian) smoothing steps."""
-        smooth_vertices = arr is None
+        apply_to_vertices = arr is None
         arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
         for _ in range(n_iter):
             arr = self._smooth_gaussian_step(arr, a, A, nn, out)
-        if smooth_vertices and not inplace:
-            return self.new_from(arr)
+
+        if apply_to_vertices:
+            if inplace:
+                return None
+            else:
+                return self.new_from(arr)
+        else:
+            return arr
 
     def smooth_shape(
         self,
@@ -771,14 +777,19 @@ class Surface:
         https://graphics.stanford.edu/courses/cs468-01-fall/Papers/taubin-smoothing.pdf
         """
         assert 0 < a < -b, "a should be between 0 and -b."
-        smooth_vertices = arr is None
+        apply_to_vertices = arr is None
         arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
         for _ in range(n_iter):
             arr = self._smooth_gaussian_step(arr, a, A, nn, out)  # Gauss step
             arr = self._smooth_gaussian_step(arr, b, A, nn, out)  # Taubin step
 
-        if smooth_vertices and not inplace:
-            return self.new_from(arr)
+        if apply_to_vertices:
+            if inplace:
+                return None
+            else:
+                return self.new_from(arr)
+        else:
+            return arr
 
     def tangential_relaxation(
         self,

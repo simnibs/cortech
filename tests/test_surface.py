@@ -1,4 +1,6 @@
 import copy
+from pathlib import Path
+import tempfile
 
 import nibabel as nib
 import numpy as np
@@ -308,8 +310,31 @@ class TestSurface:
         np.testing.assert_allclose(d.vertices, diamond.vertices)
         np.testing.assert_allclose(d.faces, diamond.faces)
 
+    @pytest.mark.parametrize("space", ["scanner", "surface"])
+    def test_to_surface_ras(self, diamond_vertices, diamond_faces, space):
+        """Test conversion of coordinates to scanner/surface ras."""
+        geom = VolumeGeometry(
+            valid=True,
+            cosines=[[-1, 0, 0], [0, 0, 1], [0, -1, 0]],
+            cras=[10.0, 5.0, 0.0],
+        )
+        ras2tkr = geom.get_affine("tkr", fr="scanner")
+        diamond_vertices_tkr = nib.affines.apply_affine(ras2tkr, diamond_vertices)
 
-class TestSurfaceIO:
+        s_ras = Surface(diamond_vertices, diamond_faces, "scanner", geom)
+        s_tkr = Surface(diamond_vertices_tkr, diamond_faces, "surface", geom)
+
+        assert not np.allclose(s_ras.vertices, s_tkr.vertices)
+
+        match space:
+            case "scanner":
+                s_tkr.to_scanner_ras()
+            case "surface":
+                s_ras.to_surface_ras()
+        np.testing.assert_allclose(s_ras.vertices, s_tkr.vertices)
+
+
+class TestSurfaceLoad:
     def test_from_freesurfer(self, BERT_DIR):
         s = Surface.from_freesurfer(BERT_DIR / "surf" / "lh.white")
         assert s.n_vertices == 2562
@@ -375,28 +400,57 @@ class TestSurfaceIO:
         s = Surface.from_file(BERT_DIR / "surf" / "lh.white.no_volgeom")
         assert not s.geometry.valid
 
-    @pytest.mark.parametrize("space", ["scanner", "surface"])
-    def test_to_surface_ras(self, diamond_vertices, diamond_faces, space):
-        """Test conversion of coordinates to scanner/surface ras."""
-        geom = VolumeGeometry(
-            valid=True,
-            cosines=[[-1, 0, 0], [0, 0, 1], [0, -1, 0]],
-            cras=[10.0, 5.0, 0.0],
-        )
-        ras2tkr = geom.get_affine("tkr", fr="scanner")
-        diamond_vertices_tkr = nib.affines.apply_affine(ras2tkr, diamond_vertices)
 
-        s_ras = Surface(diamond_vertices, diamond_faces, "scanner", geom)
-        s_tkr = Surface(diamond_vertices_tkr, diamond_faces, "surface", geom)
+class TestSurfaceSave:
+    @staticmethod
+    def _assert_equal_surfaces(a: Surface, b: Surface):
+        np.testing.assert_allclose(a.vertices, b.vertices)
+        np.testing.assert_allclose(a.faces, b.faces)
 
-        assert not np.allclose(s_ras.vertices, s_tkr.vertices)
+        assert a.geometry.valid == b.geometry.valid
+        assert a.geometry.filename == b.geometry.filename
+        np.testing.assert_allclose(a.geometry.volume, b.geometry.volume)
+        np.testing.assert_allclose(a.geometry.voxelsize, b.geometry.voxelsize)
+        np.testing.assert_allclose(a.geometry.cras, b.geometry.cras)
+        np.testing.assert_allclose(a.geometry.cosines, b.geometry.cosines)
 
-        match space:
-            case "scanner":
-                s_tkr.to_scanner_ras()
-            case "surface":
-                s_ras.to_surface_ras()
-        np.testing.assert_allclose(s_ras.vertices, s_tkr.vertices)
+    @pytest.mark.parametrize(
+        "filename",
+        [
+            "lh.white",
+            "lh.white.gii",
+            "lh.white.no_volgeom",  # has vol geom but valid = False
+            "lh.white.no_volgeom.gii",  # has no vol geom
+            "lh.white.stripped",  # has no vol geom
+        ],
+    )
+    @pytest.mark.parametrize("ext", ["", ".gii"])
+    def test_save(self, BERT_DIR, filename, ext):
+        """Test that volume geometry information (whether present or not) is
+        correctly preserved upon saving and loading a file.
+        """
+        s = Surface.from_file(BERT_DIR / "surf" / filename)
+
+        f = tempfile.NamedTemporaryFile(mode="w")
+        p = Path(f.name).with_suffix(ext)
+        s.save(p)
+        t = Surface.from_file(p)
+        f.close()
+
+        np.testing.assert_allclose(s.vertices, t.vertices)
+        np.testing.assert_allclose(s.faces, t.faces)
+
+        assert s.geometry.valid == t.geometry.valid
+        if filename == "lh.white.no_volgeom" and ext == ".gii":
+            # This file actually has vol geom info but `valid` is set to False.
+            # When the vol geom is invalid, we don't write it into the gifti
+            # file as otherwise it would be considered valid!
+            return
+        assert s.geometry.filename == t.geometry.filename
+        np.testing.assert_allclose(s.geometry.volume, t.geometry.volume)
+        np.testing.assert_allclose(s.geometry.voxelsize, t.geometry.voxelsize)
+        np.testing.assert_allclose(s.geometry.cras, t.geometry.cras)
+        np.testing.assert_allclose(s.geometry.cosines, t.geometry.cosines)
 
 
 @pytest.mark.parametrize("method", ["nearest", "linear"])
