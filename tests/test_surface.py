@@ -402,18 +402,6 @@ class TestSurfaceLoad:
 
 
 class TestSurfaceSave:
-    @staticmethod
-    def _assert_equal_surfaces(a: Surface, b: Surface):
-        np.testing.assert_allclose(a.vertices, b.vertices)
-        np.testing.assert_allclose(a.faces, b.faces)
-
-        assert a.geometry.valid == b.geometry.valid
-        assert a.geometry.filename == b.geometry.filename
-        np.testing.assert_allclose(a.geometry.volume, b.geometry.volume)
-        np.testing.assert_allclose(a.geometry.voxelsize, b.geometry.voxelsize)
-        np.testing.assert_allclose(a.geometry.cras, b.geometry.cras)
-        np.testing.assert_allclose(a.geometry.cosines, b.geometry.cosines)
-
     @pytest.mark.parametrize(
         "filename",
         [
@@ -431,11 +419,10 @@ class TestSurfaceSave:
         """
         s = Surface.from_file(BERT_DIR / "surf" / filename)
 
-        f = tempfile.NamedTemporaryFile(mode="w")
-        p = Path(f.name).with_suffix(ext)
-        s.save(p)
-        t = Surface.from_file(p)
-        f.close()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            p = (Path(tmpdir) / "tmpfile").with_suffix(ext)
+            s.save(p)
+            t = Surface.from_file(p)
 
         np.testing.assert_allclose(s.vertices, t.vertices)
         np.testing.assert_allclose(s.faces, t.faces)
