@@ -232,8 +232,6 @@ def read_metadata_gifti(gii: nib.GiftiImage):
     n_fields = 0
     vol_geom = {}
 
-    print(m)
-
     if "VolGeomFname" in m:
         vol_geom["filename"] = m["VolGeomFname"]
         n_fields += 1
