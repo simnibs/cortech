@@ -68,7 +68,7 @@ class Surface:
         vertices: npt.NDArray,
         faces: npt.NDArray,
         space: str = "scanner",
-        geometry: dict | cortech.freesurfer.VolumeGeometry | None = None,
+        geometry: dict | cortech.freesurfer.VolumeGeometry | None | str = "default",
         edge_pairs: npt.NDArray | None = None,
     ) -> None:
         """Class for representing a triangulated surface."""
@@ -83,6 +83,8 @@ class Surface:
             self.geometry = geometry
         elif geometry is None:
             self.geometry = cortech.freesurfer.VolumeGeometry(False)
+        elif geometry == "default":
+            self.geometry = cortech.freesurfer.VolumeGeometry.with_defaults()
         else:
             raise ValueError("Invalid geometry")
 
