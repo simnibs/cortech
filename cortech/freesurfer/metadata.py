@@ -86,7 +86,7 @@ class VolumeGeometry:
     def voxelsize(self, value):
         if value is not None:
             assert len(value) == 3
-            self._voxelsize = np.asarray(value, dtype=int)
+            self._voxelsize = np.asarray(value, dtype=float)
         else:
             self._voxelsize = np.ones(3)
 
