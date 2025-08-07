@@ -8,6 +8,7 @@
 #include <CGAL/Polygon_mesh_processing/connected_components.h>
 // #include <CGAL/Polygon_mesh_processing/corefinement.h>
 // #include <CGAL/Polygon_mesh_processing/fair.h>
+#include <CGAL/Polygon_mesh_processing/intersection.h>
 #include <CGAL/Polygon_mesh_processing/remesh.h>
 #include <CGAL/Polygon_mesh_processing/repair_self_intersections.h>
 #include <CGAL/Polygon_mesh_processing/self_intersections.h>
@@ -27,6 +28,33 @@ using face_descriptor = boost::graph_traits<Surface_mesh>::face_descriptor;
 
 namespace PMP = CGAL::Polygon_mesh_processing;
 
+CGAL_t::vecvec<int> pmp_intersecting_meshes(
+    CGAL_t::vecvec<float> vertices0,
+    CGAL_t::vecvec<int> faces0,
+    CGAL_t::vecvec<float> vertices1,
+    CGAL_t::vecvec<int> faces1)
+{
+    Surface_mesh mesh0 = CGAL_sm::build(vertices0, faces0);
+    Surface_mesh mesh1 = CGAL_sm::build(vertices1, faces1);
+
+    auto np1 = CGAL::parameters::default_values();
+    auto np2 = CGAL::parameters::default_values();
+
+    std::vector<std::pair<face_descriptor, face_descriptor>> intersecting_tris;
+    PMP::internal::compute_face_face_intersection(mesh0, mesh1, std::back_inserter(intersecting_tris), np1, np2);
+    // PMP::self_intersections<CGAL::Parallel_if_available_tag>(mesh.faces(), mesh, std::back_inserter(intersecting_tris));
+
+    int n_intersections = intersecting_tris.size();
+    CGAL_t::vecvec<int> intersecting_faces(n_intersections, std::vector<int>(2));
+    for (int i = 0; i < n_intersections; i++)
+    {
+        intersecting_faces[i][0] = (int)intersecting_tris[i].first;
+        intersecting_faces[i][1] = (int)intersecting_tris[i].second;
+    }
+
+    return intersecting_faces;
+}
+
 // // std::tuple<std::vector<float>,std::vector<float>,std::vector<float>,std::vector<float>,CGAL_t::vecvec<float>,CGAL_t::vecvec<float>>
 // int pmp_interpolated_corrected_curvatures(
 //     CGAL_t::vecvec<float> vertices,
@@ -41,7 +69,6 @@ namespace PMP = CGAL::Polygon_mesh_processing;
 //     // boost::property_map<Surface_mesh, CGAL::dynamic_vertex_property_t<K::FT>>::type gaussian_curv_map = get(CGAL::dynamic_vertex_property_t<K::FT>(), mesh);
 //     // boost::property_map<Surface_mesh, CGAL::dynamic_vertex_property_t<PMP::Principal_curvatures_and_directions<K>>>::type principal_curv_and_dir_map = get(CGAL::dynamic_vertex_property_t<PMP::Principal_curvatures_and_directions<K>>(), mesh);
 
-
 //     // creating and tying surface mesh property maps for curvatures (with defaults = 0)
 //     bool created = false;
 //     Mesh::Property_map<vertex_descriptor, K::FT> mean_curv_map, gaussian_curv_map;
@@ -53,7 +80,6 @@ namespace PMP = CGAL::Polygon_mesh_processing;
 //     Mesh::Property_map<vertex_descriptor, PMP::Principal_curvatures_and_directions<K>> principal_curvatures_and_directions_map;
 //     boost::tie(principal_curvatures_and_directions_map, created) = mesh.add_property_map<vertex_descriptor, PMP::Principal_curvatures_and_directions<K>>("v:principal_curv_and_dir_map", { 0, 0, K::Vector_3(0,0,0), K::Vector_3(0,0,0) });
 //     assert(created);
-
 
 //     PMP::interpolated_corrected_curvatures(mesh,
 //         CGAL::parameters::vertex_mean_curvature_map(mean_curv_map)
@@ -85,8 +111,7 @@ std::vector<bool> pmp_points_inside_surface(
     CGAL_t::vecvec<float> vertices,
     CGAL_t::vecvec<int> faces,
     CGAL_t::vecvec<float> points,
-    bool on_boundary_is_inside = true
-)
+    bool on_boundary_is_inside = true)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
     CGAL::Side_of_triangle_mesh<Surface_mesh, K> inside(mesh);
@@ -100,11 +125,13 @@ std::vector<bool> pmp_points_inside_surface(
 
         CGAL::Bounded_side res = inside(p);
 
-        if (res == CGAL::ON_BOUNDED_SIDE) {
+        if (res == CGAL::ON_BOUNDED_SIDE)
+        {
             is_inside[i] = true;
         }
         // point is *on* the boundary
-        else if (res == CGAL::ON_BOUNDARY && on_boundary_is_inside) {
+        else if (res == CGAL::ON_BOUNDARY && on_boundary_is_inside)
+        {
             is_inside[i] = true;
         }
         // else {
@@ -115,8 +142,7 @@ std::vector<bool> pmp_points_inside_surface(
 }
 
 std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_remove_self_intersections(
-    CGAL_t::vecvec<float> vertices, CGAL_t::vecvec<int> faces
-)
+    CGAL_t::vecvec<float> vertices, CGAL_t::vecvec<int> faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
     PMP::experimental::remove_self_intersections(mesh.faces(), mesh); // optional args
@@ -152,12 +178,10 @@ CGAL_t::vecvec<int> pmp_self_intersections(CGAL_t::vecvec<float> vertices, CGAL_
     return intersecting_faces;
 }
 
-
-std::pair<std::vector<int>,std::vector<int>> pmp_connected_components(
+std::pair<std::vector<int>, std::vector<int>> pmp_connected_components(
     CGAL_t::vecvec<float> vertices,
     CGAL_t::vecvec<int> faces,
-    std::vector<int> constrained_faces
-)
+    std::vector<int> constrained_faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
@@ -188,10 +212,13 @@ std::pair<std::vector<int>,std::vector<int>> pmp_connected_components(
         for (Surface_mesh::Halfedge_index hi : mesh.halfedges_around_face(h))
         {
             auto edge = mesh.edge(hi);
-            if (indices_with_counts.count(edge) == 0){
+            if (indices_with_counts.count(edge) == 0)
+            {
                 // new edge
                 indices_with_counts[edge] = 1;
-            } else {
+            }
+            else
+            {
                 // already seen edge
                 indices_with_counts[edge]++;
             }
@@ -199,8 +226,10 @@ std::pair<std::vector<int>,std::vector<int>> pmp_connected_components(
     }
     // Keep only edges which occur once (i.e., "outer" edges)
     std::set<Surface_mesh::Edge_index> indices;
-    for ( const auto &pair : indices_with_counts ) {
-        if (pair.second == 1){
+    for (const auto &pair : indices_with_counts)
+    {
+        if (pair.second == 1)
+        {
             indices.insert(pair.first);
         }
     }
@@ -412,7 +441,6 @@ CGAL_t::vecvec<float> pmp_smooth_angle_and_area(
 //     return vertices_faired;
 // }
 
-
 std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
     CGAL_t::vecvec<float> vertices,
     CGAL_t::vecvec<int> faces,
@@ -428,8 +456,7 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
         mesh.faces(),
         target_edge_length,
         mesh,
-        CGAL::parameters::number_of_iterations(n_iterations)
-    );
+        CGAL::parameters::number_of_iterations(n_iterations));
 
     // std::cout << "Elapsed time (isotropic remeshing): " << timer.time() << std::endl;
 
@@ -443,7 +470,6 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
 
     return pair;
 }
-
 
 // // Compute union between two meshes and refine.
 // std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_corefine_and_union(

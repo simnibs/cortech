@@ -637,6 +637,41 @@ class Surface:
         """Compute intersecting pairs of triangles."""
         return pmp.self_intersections(self.vertices, self.faces)
 
+    def intersections_with(
+        self, other, return_unique: bool = False
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Compute intersecting pairs of triangles between self and other.
+
+        Parameters
+        ----------
+        other : cortech.Surface
+        return_unique : bool
+            Return unique indices of intersecting faces for self and other.
+
+        Returns
+        -------
+        intersect_pairs: tuple[npt.NDArray, npt.NDArray]
+            Tuple of length two. `intersect_pairs[0]` contains the intersecting
+            faces of self, `intersect_pairs[1]` contains the intersecting
+            faces of other.
+            If `return_unique = False`, then
+            `len(intersect_pairs[0]) == intersect_pairs[1]` and each position
+            correspond to a pair of intersecting faces.
+            If `return_unique = True`, then each array corresponds to the
+            *unique* intersecting faces of each surface.
+
+        """
+        intersect_pairs = pmp.intersecting_meshes(
+            self.vertices, self.faces, other.vertices, other.faces
+        ).T
+        if intersect_pairs.size == 0:
+            return np.array([], dtype=int), np.array([], dtype=int)
+        else:
+            if return_unique:
+                return np.unique(intersect_pairs[0]), np.unique(intersect_pairs[1])
+            else:
+                return intersect_pairs[0], intersect_pairs[1]
+
     def isotropic_remeshing(
         self, target_edge_length: float, n_iter: int = 1, inplace: bool = False
     ):

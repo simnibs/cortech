@@ -25,6 +25,13 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         vector[vector[int]] faces,
     )
 
+    vector[vector[int]] pmp_intersecting_meshes(
+        vector[vector[float]] vertices0,
+        vector[vector[int]] faces0,
+        vector[vector[float]] vertices1,
+        vector[vector[int]] faces1,
+    )
+
     pair[vector[int], vector[int]] pmp_connected_components(
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
@@ -176,6 +183,40 @@ def self_intersections(vertices: npt.ArrayLike, faces: npt.ArrayLike) -> npt.NDA
     cdef vector[vector[int]] intersecting_pairs # list of lists
 
     intersecting_pairs = pmp_self_intersections(cpp_v, cpp_f)
+
+    return np.array(intersecting_pairs, dtype=int)
+
+
+def intersecting_meshes(
+    vertices0: npt.ArrayLike,
+    faces0: npt.ArrayLike,
+    vertices1: npt.ArrayLike,
+    faces1: npt.ArrayLike
+) -> npt.NDArray:
+    """Compute the intersecting pairs of triangles in a surface mesh.
+
+    Parameters
+    ----------
+    vertices0 : npt.ArrayLike
+    faces0 : npt.ArrayLike
+    vertices1 : npt.ArrayLike
+    faces1 : npt.ArrayLike
+
+    Returns
+    -------
+    intersecting_pairs : npt
+        intersecting_pairs[:,0] contains the face indices for the first surface.
+        intersecting_pairs[:,1] contains the face indices for the second surface.
+
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v0 = np.ascontiguousarray(vertices0, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f0 = np.ascontiguousarray(faces0, dtype=np.int32)
+    cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
+
+    cdef vector[vector[int]] intersecting_pairs # list of lists
+
+    intersecting_pairs = pmp_intersecting_meshes(cpp_v0, cpp_f0, cpp_v1, cpp_f1)
 
     return np.array(intersecting_pairs, dtype=int)
 
