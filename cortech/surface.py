@@ -11,6 +11,7 @@ from scipy.spatial import cKDTree
 import cortech.freesurfer
 import cortech.utils
 import cortech.cgal.polygon_mesh_processing as pmp
+import cortech.cgal.surface_mesh_simplification as sms
 import cortech.cgal.convex_hull_3
 from cortech.constants import Curvature
 
@@ -195,6 +196,12 @@ class Surface:
 
     #     faces_to_edges = idx.reshape(self.n_faces, 3)
 
+    def compute_edge_norm(self):  # , unique: bool = False
+        """ """
+        edges = self.vertices[self.compute_edges()]  # (n_edges, 2, 3)
+        edges = edges.reshape(self.n_faces, 3, 2, 3)
+        return np.linalg.norm(np.diff(edges, axis=2).squeeze(), axis=2)
+
     def compute_face_adjacency(self, include_self: bool = False):
         edges = self.compute_edges(sort_dim1=True)  # e.g., (1,0) and (0,1) -> (0,1)
 
@@ -215,9 +222,9 @@ class Surface:
         ).ravel()
         face_adjacency = faces_enum[a0[a1[a2]]].reshape(-1, 2)
 
-        data = np.ones(face_adjacency.shape[0])
+        data = np.ones(face_adjacency.size)
         A = scipy.sparse.csr_array(
-            (data, (face_adjacency[:, 0], face_adjacency[:, 1])),
+            (data, (face_adjacency.ravel(), face_adjacency[:, ::-1].ravel())),
             shape=(self.n_faces, self.n_faces),
         )
 
@@ -226,12 +233,19 @@ class Surface:
             A.setdiag(1)
             A = A.tocsr()
 
-        A.sum_duplicates()  # ensure canocical format
+        A.sum_duplicates()  # ensure canonical format
 
         return A
 
     def compute_face_barycenters(self):
         return self.as_mesh().mean(1)
+
+    def _compute_unnormalized_face_normals(self):
+        m = self.as_mesh()
+        return np.cross(m[:, 1, :] - m[:, 0, :], m[:, 2, :] - m[:, 0, :]).astype(float)
+
+    def compute_face_areas(self):
+        return 0.5 * np.linalg.norm(self._compute_unnormalized_face_normals(), axis=1)
 
     def compute_face_normals(self):
         """Get normal vectors for each triangle in the mesh.
@@ -247,13 +261,8 @@ class Surface:
         tnormals : ndarray
             Normal vectors of each triangle in "mesh".
         """
-        mesh = self.vertices[self.faces]
-
-        tnormals = np.cross(
-            mesh[:, 1, :] - mesh[:, 0, :], mesh[:, 2, :] - mesh[:, 0, :]
-        ).astype(float)
-        tnormals /= np.sqrt(np.sum(tnormals**2, 1))[:, np.newaxis]
-
+        tnormals = self._compute_unnormalized_face_normals()
+        tnormals /= np.linalg.norm(tnormals, axis=1, keepdims=True)
         return tnormals
 
     def compute_vertex_normals(self):
@@ -273,6 +282,31 @@ class Surface:
         )
 
         return out / np.linalg.norm(out, ord=2, axis=1, keepdims=True)
+
+    def compute_triangle_quality(self):
+        """The 'volume-length' quality metric for a triangle is defined as
+
+            Q = 4*sqrt(3) * Area / sum(EdgeLengths**2)
+
+        in table 6, row 4 of Shewchuk (2002). Q=0 (worst), Q=1 (best)
+
+        References
+        ----------
+        Shewchuk (2002). What Is a Good Linear Finite Element? Interpolation,
+            Conditioning, Anisotropy, and Quality Measures.
+            https://people.eecs.berkeley.edu/~jrs/papers/elemj.pdf
+        """
+        a = 6.928203230275509  # 4 * sqrt(3.0)
+        A = self.compute_face_areas()
+        E = self.compute_edge_norm()
+        return a * A / np.sum(E**2, 1)  # 0=worst, 1=best
+
+    def compute_interpolated_corrected_curvatures(self):
+        """Compute curvature information using CGAL."""
+        k1, k2, H, K, k1_vec, k2_vec = pmp.interpolated_corrected_curvatures(
+            self.vertices, self.faces
+        )
+        return Curvature(k1=k1, k2=k2, H=H, K=K)
 
     def compute_principal_curvatures(self):
         """Compute principal curvatures and corresponding directions. From these,
@@ -335,7 +369,7 @@ class Surface:
             H_uv[i] = self._second_fundamental_form_coefficients(vi, ni, vt[i], vn[i])
 
             # # only needed for bad conditioning?
-            # rsq = A[:,:2].sum(1) # u**2 + v**2
+            # rsq = A[:,:2].suhole_fill_refine_fairm(1) # u**2 + v**2
             # k = b/rsq
             # kmin[i] = k.min()
             # kmax[i] = k.max()
@@ -471,8 +505,8 @@ class Surface:
         k : int
             Find the kth ring neighbors.
         indices : None | npt.NDArray
-            The indices of the vertices for which to do the neighbor search.
-            Default is for all vertices.
+            The indices of the element (e.g., vertices) for which to do the
+            neighbor search. Default is for all elements.
         adj : None | scipy.sparse.csr_array
             scipy.sparse adjacency matrix of the vertices. If None, then it is
             computed.
@@ -506,7 +540,8 @@ class Surface:
             case _:
                 raise ValueError
 
-        indices = np.arange(n).reshape(-1, 1) if indices is None else indices
+        indices = np.arange(n) if indices is None else indices
+        indices = indices[:, None] if indices.ndim == 1 else indices
         assert indices.ndim == 2, "`indices` must be (n, n_start_indices)"
 
         knn, kr = cortech.utils.k_ring_neighbors(k, indices, n, adj.indices, adj.indptr)
@@ -622,6 +657,121 @@ class Surface:
         v, f = cortech.cgal.convex_hull_3.convex_hull(self.vertices)
         return self.new_from(v, f)
 
+    def split(self, p, d, inplace: bool = False):
+        """Split the surface at a plane defined by a point `p` and a direction
+        `d`.
+
+        Parameters
+        ----------
+        p : npt.ArrayLike
+            Point on the plane.
+        d : npt.ArrayLike
+            Direction vector of the plane.
+        inplace : bool, optional
+            Modify the surface in place(default = False).
+        Returns
+        -------
+        _type_
+            _description_
+
+        Notes
+        -----
+        CGAL::Polygon_mesh_processing::clip
+        """
+        v, f = pmp.split(self.vertices, self.faces, p, d)
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
+
+    def hole_fill_refine_fair(self, inplace: bool = False):
+        """Fill, refine and fair holes in the surface.
+
+        Notes
+        -----
+        CGAL::Polygon_mesh_processing::triangulate_refine_and_fair_hole
+        """
+        v, f = pmp.hole_fill_refine_fair(self.vertices, self.faces)
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
+
+    def clip(self, p: npt.ArrayLike, d: npt.ArrayLike, inplace: bool = False):
+        """Clip the by keeping the part that is on the negative side of a plane
+        defined by a point `p` and a direction `d`. The side opposite to `d` is
+        kept.
+
+
+        Parameters
+        ----------
+        p : npt.ArrayLike
+            Point on the plane.
+        d : npt.ArrayLike
+            Direction vector of the plane.
+        inplace : bool, optional
+            Modify the surface in place(default = False).
+
+        Returns
+        -------
+
+
+        Notes
+        -----
+        CGAL::Polygon_mesh_processing::clip
+        """
+        p = np.asarray(p)
+        assert p.ndim == 1 and p.size == 3
+        d = np.asarray(d)
+        assert d.ndim == 1 and d.size == 3
+
+        v, f = pmp.clip(self.vertices, self.faces, p, d)
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
+
+    def simplify(self, stop_face_count: int, inplace: bool = False):
+        """Decimate the surface by edge collapse until `stop_face_count` number
+        of faces has been reached.
+
+        Parameters
+        ----------
+        stop_face_count
+            Target number of faces.
+        inplace : bool, optional
+            Modify the surface in place(default = False).
+
+
+        Returns
+        -------
+        surface
+            New Surface or inplace update of self.
+
+        Notes
+        -----
+        CGAL::Surface_mesh_simplification::edge_collapse
+        """
+        v, f = sms.simplify(self.vertices, self.faces, stop_face_count)
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
+
+    def repair(self, inplace: bool = False):
+        """Repair the surface mesh as polygon soup."""
+        raise NotImplementedError("This method does not currently work")
+        v, f = pmp.repair_mesh(self.vertices, self.faces)
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
+
     def remove_self_intersections(self, inplace: bool = False):
         """Remove self-intersections. This process includes smoothing and
         possibly hole filling.
@@ -660,6 +810,10 @@ class Surface:
             If `return_unique = True`, then each array corresponds to the
             *unique* intersecting faces of each surface.
 
+        Notes
+        -----
+        CGAL/Polygon_mesh_processing/intersection.h
+        PMP::internal::compute_face_face_intersection
         """
         intersect_pairs = pmp.intersecting_meshes(
             self.vertices, self.faces, other.vertices, other.faces
@@ -690,8 +844,26 @@ class Surface:
             self.vertices, self.faces, points, on_boundary_is_inside
         )
 
-    def smooth_angle_and_area(self, inplace: bool = False, **kwargs):
-        v = pmp.smooth_angle_and_area(self.vertices, self.faces, **kwargs)
+    def smooth_angle_and_area(
+        self,
+        constrained_vertices: npt.ArrayLike | None = None,
+        use_angle_smoothing: bool = True,
+        use_area_smoothing: bool = False,
+        use_delaunay_flips: bool = True,
+        use_safety_constraints: bool = False,
+        n_iter: int = 1,
+        inplace: bool = False,
+    ):
+        v = pmp.smooth_angle_and_area(
+            self.vertices,
+            self.faces,
+            constrained_vertices,
+            n_iter,
+            use_angle_smoothing,
+            use_area_smoothing,
+            use_delaunay_flips,
+            use_safety_constraints,
+        )
         if inplace:
             self.vertices = v
         else:
@@ -834,14 +1006,12 @@ class Surface:
         n_iter: int = 1,
         inplace: bool = False,
     ):
-        """Perform shape smoothing via mean curvature flow (preserving vertex
-        density).
+        """
 
         Parameters
         ----------
         constrained_vertices:
-            Indices of vertices to fix (smoothing will not be applied to these
-            vertices).
+            Indices of vertices.
         time
         n_iter
         inplace : bool
@@ -1141,6 +1311,18 @@ class Surface:
 
         return tris, weights, projs, dists
 
+    def remove_faces(self, faces: npt.ArrayLike):
+        """Remove the specified faces. The surface will be pruned afterwards,
+        removing any unused vertices.
+
+        Parameters
+        ----------
+        faces
+            Indices of the faces to remove.
+        """
+        self.faces = np.delete(self.faces, faces, axis=0)
+        self.prune()
+
     def prune(self):
         """Remove unused vertices and reindex faces."""
         vertices_used = np.unique(self.faces)
@@ -1191,6 +1373,32 @@ class Surface:
             self, scalars, mesh_kwargs=mesh_kwargs, plotter_kwargs=plotter_kwargs
         )
 
+    def save_off(self, filename):
+        """Writes mesh surfaces as an .off file
+
+        Parameters
+        -----------
+        msh: Mesh
+            Mesh object
+        fn: str
+            Name of file
+        """
+        with open(filename, "wb") as f:
+            f.write("OFF\n".encode())
+            f.write("# File created by CORTECH \n\n".encode())
+            np.savetxt(
+                f, np.array([self.n_vertices, self.n_faces, 0])[None, :], fmt="%u"
+            )
+            np.savetxt(f, self.vertices, fmt="%0.6f")
+            np.savetxt(
+                f,
+                np.concatenate(
+                    (np.repeat(self.faces.shape[1], self.n_faces)[:, None], self.faces),
+                    axis=1,
+                ).astype(np.uint),
+                fmt="%u",
+            )
+
     def as_gifti(self):
         header = None
         vol_geom = self.geometry.as_gifti_dict()
@@ -1235,6 +1443,8 @@ class Surface:
                     for k, v in scalars.items():
                         m[k] = v
                 m.save(filename)
+            case ".off":
+                self.save_off(filename)
             case _:
                 cortech.freesurfer.write_geometry(
                     filename,

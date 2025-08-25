@@ -15,6 +15,31 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         cppbool on_boundary_is_inside,
     )
 
+    pair[vector[vector[float]], vector[vector[int]]] pmp_split(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+        vector[float] plane_origin,
+        vector[float] plane_direction,
+    )
+
+    pair[vector[vector[float]], vector[vector[int]]] pmp_hole_fill_refine_fair(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+    )
+
+    pair[vector[vector[float]], vector[vector[int]]] pmp_clip(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+        vector[float] plane_origin,
+        vector[float] plane_direction,
+        # cppbool clip_volume
+    )
+
+    pair[vector[vector[float]], vector[vector[int]]] pmp_repair_mesh(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+    )
+
     pair[vector[vector[float]], vector[vector[int]]] pmp_remove_self_intersections(
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
@@ -59,14 +84,10 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         int n_iter
     )
 
-    # int pmp_interpolated_corrected_curvatures(
-    #     vector[vector[float]] vertices,
-    #     vector[vector[int]] faces,
-    # )
-    # tuple[vector[float],vector[float],vector[float],vector[float],vector[vector[float]],vector[vector[float]]] pmp_interpolated_corrected_curvatures(
-    #     vector[vector[float]] vertices,
-    #     vector[vector[int]] faces,
-    # )
+    vector[vector[float]] pmp_interpolated_corrected_curvatures(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+    )
 
     vector[vector[float]] pmp_smooth_angle_and_area(
         vector[vector[float]] vertices,
@@ -132,6 +153,116 @@ def points_inside_surface(
     out = pmp_points_inside_surface(cpp_v, cpp_f, cpp_p, cpp_on_boundary_is_inside)
 
     return np.array(out, dtype=bool)
+
+def hole_fill_refine_fair(
+        vertices: npt.NDArray,
+        faces: npt.NDArray,
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+    """Compute the intersecting pairs of triangles in a surface mesh.
+
+    Parameters
+    ----------
+    vertices : npt.ArrayLike
+    faces : npt.ArrayLike
+
+    Returns
+    -------
+
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+
+    cdef pair[vector[vector[float]], vector[vector[int]]] out
+
+    out = pmp_hole_fill_refine_fair(cpp_v, cpp_f)
+
+    v = np.array(out.first, dtype=float)
+    f = np.array(out.second, dtype=int)
+
+    return v, f
+
+
+def split(
+        vertices: npt.NDArray,
+        faces: npt.NDArray,
+        plane_origin: npt.NDArray,
+        plane_direction: npt.NDArray
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+    """Compute the intersecting pairs of triangles in a surface mesh.
+
+    Parameters
+    ----------
+    vertices : npt.ArrayLike
+    faces : npt.ArrayLike
+
+    Returns
+    -------
+    intersecting_pairs : npt
+
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[float] cpp_orig = np.ascontiguousarray(plane_origin, dtype=np.float32)
+    cdef np.ndarray[float] cpp_dir = np.ascontiguousarray(plane_direction, dtype=np.float32)
+
+    cdef pair[vector[vector[float]], vector[vector[int]]] out
+
+    out = pmp_split(cpp_v, cpp_f, cpp_orig, cpp_dir)
+
+    v = np.array(out.first, dtype=float)
+    f = np.array(out.second, dtype=int)
+
+    return v, f
+
+def clip(
+        vertices: npt.NDArray,
+        faces: npt.NDArray,
+        plane_origin: npt.NDArray,
+        plane_direction: npt.NDArray,
+        # clip_volume: bool = True,
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+    """Compute the intersecting pairs of triangles in a surface mesh.
+
+
+    Parameters
+    ----------
+    vertices : npt.ArrayLike
+    faces : npt.ArrayLike
+
+    Returns
+    -------
+    intersecting_pairs : npt
+
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[float] cpp_orig = np.ascontiguousarray(plane_origin, dtype=np.float32)
+    cdef np.ndarray[float] cpp_dir = np.ascontiguousarray(plane_direction, dtype=np.float32)
+    # cdef cppbool cpp_clip_volume = clip_volume
+
+    cdef pair[vector[vector[float]], vector[vector[int]]] out
+
+    out = pmp_clip(cpp_v, cpp_f, cpp_orig, cpp_dir)
+
+    v = np.array(out.first, dtype=float)
+    f = np.array(out.second, dtype=int)
+
+    return v, f
+
+def repair_mesh(
+        vertices: npt.NDArray, faces: npt.NDArray,
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+
+    cdef pair[vector[vector[float]], vector[vector[int]]] out
+
+    out = pmp_repair_mesh(cpp_v, cpp_f)
+
+    v = np.array(out.first, dtype=float)
+    f = np.array(out.second, dtype=int)
+
+    return v, f
 
 
 def remove_self_intersections(
@@ -312,23 +443,22 @@ def smooth_shape(
     return np.array(v, dtype=float)
 
 
-# def interpolated_corrected_curvatures(vertices: npt.ArrayLike, faces: npt.ArrayLike):
-#     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
-#     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-#     cdef vector[float] H, K, pc_min, pc_max
-#     cdef vector[vector[float]] pc_min_vec, pc_max_vec
-#     cdef int x
+def interpolated_corrected_curvatures(vertices: npt.ArrayLike, faces: npt.ArrayLike):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef vector[vector[float]] curv
 
-#     x = pmp_interpolated_corrected_curvatures(cpp_v, cpp_f)
-#     # H,K,pc_min,pc_max,pc_min_vec,pc_max_vec = pmp_interpolated_corrected_curvatures(cpp_v, cpp_f)
-#     # H = np.array(H,dtype=float)
-#     # K = np.array(K,dtype=float)
-#     # pc_min = np.array(pc_min,dtype=float)
-#     # pc_max = np.array(pc_max,dtype=float)
-#     # pc_min_vec = np.array(pc_min_vec,dtype=float)
-#     # pc_max_vec = np.array(pc_max_vec,dtype=float)
-#     return x
-#     # return H, K, pc_min, pc_max, pc_min_vec, pc_max_vec
+    curv = pmp_interpolated_corrected_curvatures(cpp_v, cpp_f)
+
+    curv_arr = np.array(curv, dtype=float)
+    k1 = np.ascontiguousarray(curv_arr[:,0])
+    k2 = np.ascontiguousarray(curv_arr[:,1])
+    H = np.ascontiguousarray(curv_arr[:,2])
+    K = np.ascontiguousarray(curv_arr[:,3])
+    k1_vec = np.ascontiguousarray(curv_arr[:,4:7])
+    k2_vec = np.ascontiguousarray(curv_arr[:, 7:])
+
+    return k1, k2, H, K, k1_vec, k2_vec
 
 def tangential_relaxation(
         vertices: npt.ArrayLike,
@@ -363,7 +493,7 @@ def tangential_relaxation(
 def smooth_angle_and_area(
         vertices: npt.ArrayLike,
         faces: npt.ArrayLike,
-        constrained_vertices: Union[npt.ArrayLike, None] = None,
+        constrained_vertices: npt.ArrayLike | None = None,
         n_iter: int = 1,
         use_angle_smoothing: bool = True,
         use_area_smoothing: bool = False,
