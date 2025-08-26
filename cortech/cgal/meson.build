@@ -11,6 +11,15 @@ cpp_cgal_args = cpp.get_supported_arguments(
     '-frounding-math',  # Disable optimizations related to float rounding
 )
 
+# if host_os == 'linux'
+# elif host_os == 'darwin'
+if host_os == 'windows'
+    win_args = cpp.get_supported_arguments(
+        '/bigobj',      # allow large obj files
+    )
+    cpp_cgal_args += win_args
+endif
+
 cpp_cgal_macros = ['-DCGAL_EIGEN3_ENABLED']
 # PMP area smoothing needs this
 # -DCGAL_PMP_USE_CERES_SOLVER
