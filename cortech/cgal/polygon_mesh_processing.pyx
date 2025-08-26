@@ -35,10 +35,10 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         # cppbool clip_volume
     )
 
-    pair[vector[vector[float]], vector[vector[int]]] pmp_repair_mesh(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-    )
+    # pair[vector[vector[float]], vector[vector[int]]] pmp_repair_mesh(
+    #     vector[vector[float]] vertices,
+    #     vector[vector[int]] faces,
+    # )
 
     pair[vector[vector[float]], vector[vector[int]]] pmp_remove_self_intersections(
         vector[vector[float]] vertices,
@@ -249,20 +249,20 @@ def clip(
 
     return v, f
 
-def repair_mesh(
-        vertices: npt.NDArray, faces: npt.NDArray,
-    ) -> tuple[npt.NDArray, npt.NDArray]:
-    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
-    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+# def repair_mesh(
+#         vertices: npt.NDArray, faces: npt.NDArray,
+#     ) -> tuple[npt.NDArray, npt.NDArray]:
+#     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+#     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
 
-    cdef pair[vector[vector[float]], vector[vector[int]]] out
+#     cdef pair[vector[vector[float]], vector[vector[int]]] out
 
-    out = pmp_repair_mesh(cpp_v, cpp_f)
+#     out = pmp_repair_mesh(cpp_v, cpp_f)
 
-    v = np.array(out.first, dtype=float)
-    f = np.array(out.second, dtype=int)
+#     v = np.array(out.first, dtype=float)
+#     f = np.array(out.second, dtype=int)
 
-    return v, f
+#     return v, f
 
 
 def remove_self_intersections(

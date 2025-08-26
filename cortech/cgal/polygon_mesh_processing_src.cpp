@@ -21,7 +21,7 @@
 #include <CGAL/Polygon_mesh_processing/triangulate_hole.h>
 #include <CGAL/Polygon_mesh_processing/border.h>
 
-#include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
+// #include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
 #include <CGAL/Side_of_triangle_mesh.h>
 
 #include <cgal_helpers.h>
@@ -34,74 +34,68 @@ using halfedge_descriptor = boost::graph_traits<Surface_mesh>::halfedge_descript
 
 namespace PMP = CGAL::Polygon_mesh_processing;
 
-struct Array_traits
-{
-    struct Equal_3
-    {
-        bool operator()(const std::array<K::FT, 3> &p, const std::array<K::FT, 3> &q) const
-        {
-            return (p == q);
-        }
-    };
-    struct Less_xyz_3
-    {
-        bool operator()(const std::array<K::FT, 3> &p, const std::array<K::FT, 3> &q) const
-        {
-            return std::lexicographical_compare(p.begin(), p.end(), q.begin(), q.end());
-        }
-    };
-    Equal_3 equal_3_object() const { return Equal_3(); }
-    Less_xyz_3 less_xyz_3_object() const { return Less_xyz_3(); }
-};
+// struct Array_traits
+// {
+//     struct Equal_3
+//     {
+//         bool operator()(const std::array<K::FT, 3> &p, const std::array<K::FT, 3> &q) const
+//         {
+//             return (p == q);
+//         }
+//     };
+//     struct Less_xyz_3
+//     {
+//         bool operator()(const std::array<K::FT, 3> &p, const std::array<K::FT, 3> &q) const
+//         {
+//             return std::lexicographical_compare(p.begin(), p.end(), q.begin(), q.end());
+//         }
+//     };
+//     Equal_3 equal_3_object() const { return Equal_3(); }
+//     Less_xyz_3 less_xyz_3_object() const { return Less_xyz_3(); }
+// };
 
-std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_repair_mesh(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces)
-{
-    // int n_vertices = vertices.size();
+// std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_repair_mesh(
+//     CGAL_t::vecvec<float> vertices,
+//     CGAL_t::vecvec<int> faces)
+// {
+//     // int n_vertices = vertices.size();
 
-    std::vector<std::array<K::FT, 3>> points;
-    for (int i = 0; i < vertices.size(); ++i)
-    {
-        points[i] = CGAL::make_array<K::FT>(vertices[i][0], vertices[i][1], vertices[i][2]);
-        // points[i] = K::Point_3(vertices[i][0], vertices[i][1], vertices[i][2]);
-    }
+//     std::vector<std::array<K::FT, 3>> points;
+//     for (int i = 0; i < vertices.size(); ++i)
+//     {
+//         points[i] = CGAL::make_array<K::FT>(vertices[i][0], vertices[i][1], vertices[i][2]);
+//         // points[i] = K::Point_3(vertices[i][0], vertices[i][1], vertices[i][2]);
+//     }
 
-    std::vector<std::array<std::size_t, 3>> polygons;
-    for (int i = 0; i < faces.size(); i++)
-    {
-        polygons[i] = CGAL::make_array<std::size_t>(
-            faces[i][0],
-            faces[i][1],
-            faces[i][2]);
-    }
+//     std::vector<std::array<std::size_t, 3>> polygons;
+//     for (int i = 0; i < faces.size(); i++)
+//     {
+//         polygons[i] = CGAL::make_array<std::size_t>(
+//             faces[i][0],
+//             faces[i][1],
+//             faces[i][2]);
+//     }
 
-    // PMP::repair_polygon_soup(points, polygons, CGAL::parameters::geom_traits(Array_traits()));
+//     PMP::repair_polygon_soup(points, polygons, CGAL::parameters::geom_traits(Array_traits()));
 
-    PMP::merge_duplicate_points_in_polygon_soup(points, polygons, CGAL::parameters::geom_traits(Array_traits()));
-    std::cout << "duplicate points merge : OK" << std::endl;
+//     // Surface_mesh mesh;
+//     // PMP::orient_polygon_soup(points, polygons);
+//     // PMP::polygon_soup_to_polygon_mesh(points, polygons, mesh);
 
-    // PMP::merge_duplicate_polygons_in_polygon_soup(points, polygons, CGAL::parameters::geom_traits(Array_traits()));
-    std::cout << "duplicate polygons merge : OK" << std::endl;
+//     CGAL_t::vecvec<float> outpoints;
+//     for (int i = 0; i < points.size(); ++i)
+//     {
+//         outpoints[i] = {points[i][0], points[i][1], points[i][2]};
+//     }
 
-    // Surface_mesh mesh;
-    // PMP::orient_polygon_soup(points, polygons);
-    // PMP::polygon_soup_to_polygon_mesh(points, polygons, mesh);
+//     CGAL_t::vecvec<int> outpolygons;
+//     for (int i = 0; i < polygons.size(); ++i)
+//     {
+//         outpolygons[i] = {polygons[i][0], polygons[i][1], polygons[i][2]};
+//     }
 
-    CGAL_t::vecvec<float> outpoints;
-    for (int i = 0; i < points.size(); ++i)
-    {
-        outpoints[i] = {points[i][0], points[i][1], points[i][2]};
-    }
-
-    CGAL_t::vecvec<int> outpolygons;
-    for (int i = 0; i < polygons.size(); ++i)
-    {
-        outpolygons[i] = {polygons[i][0], polygons[i][1], polygons[i][2]};
-    }
-
-    return std::make_pair(outpoints, outpolygons);
-}
+//     return std::make_pair(outpoints, outpolygons);
+// }
 
 std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_hole_fill_refine_fair(
     CGAL_t::vecvec<float> vertices,

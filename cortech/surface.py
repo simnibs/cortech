@@ -765,12 +765,12 @@ class Surface:
     def repair(self, inplace: bool = False):
         """Repair the surface mesh as polygon soup."""
         raise NotImplementedError("This method does not currently work")
-        v, f = pmp.repair_mesh(self.vertices, self.faces)
-        if inplace:
-            self.vertices = v
-            self.faces = f
-        else:
-            return self.new_from(v, f)
+        # v, f = pmp.repair_mesh(self.vertices, self.faces)
+        # if inplace:
+        #     self.vertices = v
+        #     self.faces = f
+        # else:
+        #     return self.new_from(v, f)
 
     def remove_self_intersections(self, inplace: bool = False):
         """Remove self-intersections. This process includes smoothing and
