@@ -440,10 +440,8 @@ class Hemisphere:
 
         infra_supra_model = {}
         if infra_supra_model_type_and_path is not None:
-            if registration is None:
-                registration='sphere.reg'
 
-            fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", hemi, registration=registration)
+            fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", hemi, registration='sphere.reg')
             fsavg.registration.project(reg_surf)
             for model_type in infra_supra_model_type_and_path.keys():
                 if "equivolume" in model_type or "equidistance" in model_type:
