@@ -11,6 +11,15 @@ cpp_cgal_args = cpp.get_supported_arguments(
     '-frounding-math',  # Disable optimizations related to float rounding
 )
 
+# if host_os == 'linux'
+# elif host_os == 'darwin'
+if host_os == 'windows'
+    win_args = cpp.get_supported_arguments(
+        '/bigobj',      # allow large obj files
+    )
+    cpp_cgal_args += win_args
+endif
+
 cpp_cgal_macros = ['-DCGAL_EIGEN3_ENABLED']
 # PMP area smoothing needs this
 # -DCGAL_PMP_USE_CERES_SOLVER
@@ -32,6 +41,15 @@ pmp = python.extension_module(
 )
 
 pmp = python.extension_module(
+    'convex_hull_3',
+    cython_gen_cpp.process('convex_hull_3.pyx'),
+    cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
+    dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep],
+    install: true,
+    subdir: cgal_dir,
+)
+
+pmp = python.extension_module(
     'polygon_mesh_processing',
     cython_gen_cpp.process('polygon_mesh_processing.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
@@ -41,8 +59,8 @@ pmp = python.extension_module(
 )
 
 pmp = python.extension_module(
-    'convex_hull_3',
-    cython_gen_cpp.process('convex_hull_3.pyx'),
+    'surface_mesh_simplification',
+    cython_gen_cpp.process('surface_mesh_simplification.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
     dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep],
     install: true,

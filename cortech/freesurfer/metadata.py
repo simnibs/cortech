@@ -31,7 +31,8 @@ class VolumeGeometry:
             if any([xras is None, yras is None, zras is None]):
                 if self.valid:
                     raise ValueError(
-                        "VolumeGeometry was set to as `valid` but x/y/z ras was not specified."
+                        "VolumeGeometry was set to as `valid` but xras, yras, "
+                        "or zras was not specified."
                     )
                 xras = np.array([-1.0, 0.0, 0.0])
                 yras = np.array([0.0, 0.0, -1.0])
@@ -85,7 +86,7 @@ class VolumeGeometry:
     def voxelsize(self, value):
         if value is not None:
             assert len(value) == 3
-            self._voxelsize = np.asarray(value, dtype=int)
+            self._voxelsize = np.asarray(value, dtype=float)
         else:
             self._voxelsize = np.ones(3)
 
@@ -179,8 +180,36 @@ class VolumeGeometry:
         }
         return cls(**inputs)
 
-    # def __repr__(self):
-    #     return
+    @classmethod
+    def with_defaults(cls):
+        """Return a *valid* instance of VolumeGeometry with default parameters
+        setting the following attributes
+
+            valid = True
+            filename = "vol.nii"
+
+        """
+        geom = cls(False)
+        geom.valid = True
+        geom.filename = "vol.nii"
+        return geom
+
+    def __repr__(self):
+        return "\n".join(
+            [
+                f"valid             {self.valid}",
+                f"filename          {'(none)' if self.filename is None else self.filename}",
+                f"volume            {self.volume}",
+                f"voxelsize         {self.voxelsize}",
+                *[
+                    f"{k}              {np.array2string(v, precision=4)}"
+                    for k, v in self._xyz_from_cosines(self.cosines).items()
+                ],
+                f"cras              {np.array2string(self.cras, precision=4)}",
+                f"vox-to-ras        {np.array2string(self.get_affine('ras'), precision=4, prefix='vox-to-ras        ')}",
+                f"vox-to-ras[tkr]   {np.array2string(self.get_affine('tkr'), precision=4, prefix='vox-to-ras[tkr]   ')}",
+            ]
+        )
 
 
 def read_metadata_gifti(gii: nib.GiftiImage):
@@ -231,8 +260,6 @@ def read_metadata_gifti(gii: nib.GiftiImage):
     m = vertices.meta
     n_fields = 0
     vol_geom = {}
-
-    print(m)
 
     if "VolGeomFname" in m:
         vol_geom["filename"] = m["VolGeomFname"]

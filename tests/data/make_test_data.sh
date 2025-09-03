@@ -1,4 +1,5 @@
 # resample bert to fsaverage3
+# lh.white.stripped is created with nibabel without saving volume information
 cp $FREESURFER_HOME/subjects/bert/mri/T1.mgz .
 for hemi in lh rh
 do
