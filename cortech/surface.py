@@ -1593,8 +1593,14 @@ class MultiSurface(Surface):
 
 
 class Sphere(Surface):
-    def __init__(self, *args, normalize: bool = True, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        *args,
+        geometry: dict | cortech.freesurfer.VolumeGeometry | None | str = None,
+        normalize: bool = True,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, geometry=geometry, **kwargs)
         # Ensure on unit sphere
         if normalize:
             self.vertices = cortech.utils.normalize(self.vertices, axis=-1)
