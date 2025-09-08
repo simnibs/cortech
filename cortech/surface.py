@@ -1455,7 +1455,7 @@ class Surface:
                 )
 
     @classmethod
-    def from_gifti(cls, filename: nib.GiftiImage | Path | str):
+    def from_gifti(cls, filename: nib.GiftiImage | Path | str, **kwargs):
         """Read surface from Gifti file. Will also read the following metadata
         from FreeSurfer if present
 
@@ -1498,10 +1498,10 @@ class Surface:
         v = gii.agg_data("NIFTI_INTENT_POINTSET").astype(float)
         f = gii.agg_data("NIFTI_INTENT_TRIANGLE")
         space, geometry = cortech.freesurfer.metadata.read_metadata_gifti(gii)
-        return cls(v, f, space, geometry)
+        return cls(v, f, space, geometry, **kwargs)
 
     @classmethod
-    def from_freesurfer(cls, filename: Path | str):
+    def from_freesurfer(cls, filename: Path | str, **kwargs):
         """Read default and .srf files from FreeSurfer.
 
 
@@ -1519,10 +1519,10 @@ class Surface:
         v, f, m = cortech.freesurfer.read_geometry(filename, read_metadata=True)
         space = "scanner" if m.real_ras else "surface"
         geometry = cortech.freesurfer.VolumeGeometry(**m.vol_geom)
-        return cls(v, f, space, geometry)
+        return cls(v, f, space, geometry, **kwargs)
 
     @classmethod
-    def from_vtk(cls, filename: Path | str):
+    def from_vtk(cls, filename: Path | str, **kwargs):
         """
 
         Parameters
@@ -1538,21 +1538,21 @@ class Surface:
         import pyvista as pv
 
         m = pv.read(filename)
-        return cls(m.points, m.faces.reshape(-1, 4)[:, 1:])
+        return cls(m.points, m.faces.reshape(-1, 4)[:, 1:], **kwargs)
 
     @classmethod
-    def from_file(cls, filename: Path | str):
+    def from_file(cls, filename: Path | str, **kwargs):
         filename = Path(filename)
 
         match filename.suffix:
             case ".gii":
-                return cls.from_gifti(filename)
+                return cls.from_gifti(filename, **kwargs)
             case ".obj" | ".stl" | ".vtk":
-                return cls.from_vtk(filename)
+                return cls.from_vtk(filename, **kwargs)
             case _:
                 # if it doesn't match any of the above extensions, assume
                 # FreeSurfer format
-                return cls.from_freesurfer(filename)
+                return cls.from_freesurfer(filename, **kwargs)
 
     @classmethod
     def from_freesurfer_subject_dir(cls, subject_dir: Path | str, surface: str):
@@ -1595,12 +1595,14 @@ class MultiSurface(Surface):
 class Sphere(Surface):
     def __init__(
         self,
-        *args,
+        vertices: npt.NDArray,
+        faces: npt.NDArray,
+        space: str = "scanner",
         geometry: dict | cortech.freesurfer.VolumeGeometry | None | str = None,
+        edge_pairs: npt.NDArray | None = None,
         normalize: bool = True,
-        **kwargs,
     ) -> None:
-        super().__init__(*args, geometry=geometry, **kwargs)
+        super().__init__(vertices, faces, space, geometry, edge_pairs)
         # Ensure on unit sphere
         if normalize:
             self.vertices = cortech.utils.normalize(self.vertices, axis=-1)
