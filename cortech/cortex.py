@@ -544,12 +544,12 @@ class Hemisphere:
                 )
 
             model_fsav = load_model(
-                model_name[0], model_name[1], hemi, registration=model_name[2]
+                infra_supra_model_tuple[0], infra_supra_model_tuple[1], hemi, registration=infra_supra_model_tuple[2]
             )
             params_subject = Hemisphere._map_infra_supra_model_to_subject(
-                model_fsav[f"{model_name[0]}_{model_name[1]}"], registration=reg_surf
+                model_fsav[f"{infra_supra_model_tuple[0]}_{infra_supra_model_tuple[1]}"], registration=reg_surf
             )
-            infra_supra_model = {f"{model_name[0]}_{model_name[1]}": params_subject}
+            infra_supra_model = {f"{infra_supra_model_tuple[0]}_{infra_supra_model_tuple[1]}": params_subject}
 
             if not infra_supra_model:
                 print(
