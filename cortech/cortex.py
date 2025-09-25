@@ -10,6 +10,7 @@ from scipy.spatial import KDTree
 import cortech.utils
 from cortech.surface import Surface, Sphere
 from cortech.constants import Curvature
+from cortech.models.model_utils import load_model
 
 
 class Hemisphere:
@@ -220,24 +221,40 @@ class Hemisphere:
 
         """
         if not self.has_infra_supra_model():
-            print('No model for the infra supra border loaded!')
+            print("No model for the infra supra border loaded!")
             return
-
 
         thickness = self.compute_thickness()
         curv = self.compute_average_curvature(curv_kwargs=curv_args)
         surfaces = {}
-        
+
         for model in self.infra_supra_model:
-            print(f'Estimating surfaces using: {model}')
+            print(f"Estimating surfaces using: {model}")
             if "equivolume" in model:
-                if self.infra_supra_model[model].size > 1 and not self.infra_supra_model[model].shape[0]==1:
-                    self.infra_supra_model[model] = np.expand_dims(self.infra_supra_model[model], axis=0)
-                surfaces[model] = self.estimate_layers(method="equivolume", frac=self.infra_supra_model[model], thickness=thickness, curv=curv.H, return_surface=return_surface)
+                if (
+                    self.infra_supra_model[model].size > 1
+                    and not self.infra_supra_model[model].shape[0] == 1
+                ):
+                    self.infra_supra_model[model] = np.expand_dims(
+                        self.infra_supra_model[model], axis=0
+                    )
+                surfaces[model] = self.estimate_layers(
+                    method="equivolume",
+                    frac=self.infra_supra_model[model],
+                    thickness=thickness,
+                    curv=curv.H,
+                    return_surface=return_surface,
+                )
             elif "equidistance" in model:
-                surfaces[model] = self.estimate_layers(method="equidistance", frac=self.infra_supra_model[model], return_surface=return_surface)
+                surfaces[model] = self.estimate_layers(
+                    method="equidistance",
+                    frac=self.infra_supra_model[model],
+                    return_surface=return_surface,
+                )
             elif "linear" in model:
-                surf_tmp = self._predict_linear_model(self.infra_supra_model[model], curv)
+                surf_tmp = self._predict_linear_model(
+                    self.infra_supra_model[model], curv
+                )
                 if return_surface:
                     surfaces[model] = self.white.new_from(surf_tmp)
                 else:
@@ -246,6 +263,60 @@ class Hemisphere:
                 print("Unknown model!")
 
         return surfaces
+
+    def _map_infra_supra_model_to_subject(
+        self, parameters_fsav: npt.NDArray, registration=None
+    ):
+        """Map local infra-supra models from fsaverage to subject space.
+
+        Parameters
+        ----------
+        parameters_fsav : A parameter array of size nodes x params
+        registration : An optional spherical registration
+
+        Returns
+        -------
+
+        """
+
+        fsavg = Hemisphere.from_freesurfer_subject_dir(
+            "fsaverage", self.name, registration="sphere.reg"
+        )
+
+        if registration is not None:
+            fsavg.registration.project(registration)
+        elif self.has_registration():
+            fsavg.registration.project(self.registration)
+        else:
+            raise Exception("Spherical registration not set!")
+
+        params_subject = fsavg.registration.resample(parameters_fsav)
+        return params_subject
+
+    def set_infra_supra_model(self, model_name: tuple, append=False):
+        """Set infra-supra model, can append to existing models.
+
+        Parameters
+        ----------
+        model_name : model name, tuple like ('equivolume', 'local', 'spherical')
+
+        Returns
+        -------
+
+        """
+
+        model_fsav = load_model(
+            model_name[0], model_name[1], self.name, registration=model_name[2]
+        )
+        params = model_fsav[f"{model_name[0]}_{model_name[1]}"]
+
+        if model_name[1] in "local":
+            params = self._map_infra_supra_model_to_subject(params)
+
+        if self.infra_supra_model is None or append is False:
+            self.infra_supra_model = {}
+
+        self.infra_supra_model[f"{model_name[0]}_{model_name[1]}"] = params
 
     def _layer_from_distance_fraction(self, f: float | npt.NDArray = 0.5):
         """_summary_
@@ -273,8 +344,9 @@ class Hemisphere:
         f = cortech.utils.atleast_nd_append(f, 3)
         return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
 
-
-    def _predict_linear_model(self, parameters: npt.NDArray, curv: Curvature, clip_range=(0.01, 99.9)):
+    def _predict_linear_model(
+        self, parameters: npt.NDArray, curv: Curvature, clip_range=(0.01, 99.9)
+    ):
         """Predict the infra supra border using a linear model fitted on the ex-vivo data.
         NOTE: This a little suboptimal at the moment as the model is fixed, i.e., it needs
         [1, k1, k2, k1k2] whereas the parameters are passed in and are thus more general.
@@ -302,7 +374,7 @@ class Hemisphere:
         k2 = np.clip(curv.k2, pk2[0], pk2[1]).T
         k1 = k1 - k1.mean()
         k2 = k2 - k2.mean()
-        k1k2 = k1*k2
+        k1k2 = k1 * k2
 
         dummy = np.ones_like(k1)
 
@@ -313,8 +385,6 @@ class Hemisphere:
         surface = self._layer_from_distance_fraction(frac)
 
         return surface
-        
-
 
     def estimate_layers(
         self,
@@ -421,7 +491,7 @@ class Hemisphere:
         sphere: str | None = None,
         registration: str | None = None,
         inf: str | None = None,
-        infra_supra_model_type_and_path=None,
+        infra_supra_model_tuple=None,
         # thickness="thickness",
         # curv="avg_curv",
     ):
@@ -467,41 +537,35 @@ class Hemisphere:
             inf_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
 
         infra_supra_model = {}
-        if infra_supra_model_type_and_path is not None:
+        if infra_supra_model_tuple is not None:
+            if type(infra_supra_model_tuple) is not tuple:
+                raise Exception(
+                    "Infra-supra model name needs to be tuple like ('equivolume', 'local', 'spherical')"
+                )
 
-            fsavg = Hemisphere.from_freesurfer_subject_dir("fsaverage", hemi, registration='sphere.reg')
-            fsavg.registration.project(reg_surf)
-            for model_type in infra_supra_model_type_and_path.keys():
-                if "equivolume" in model_type or "equidistance" in model_type:
-                    if "global" in model_type:
-                        global_frac = np.loadtxt(infra_supra_model_type_and_path[model_type])
-                        infra_supra_model[model_type] = np.atleast_1d(global_frac.item())
-                    elif "local" in model_type:
-                        local_frac_im = nib.load(infra_supra_model_type_and_path[model_type])
-                        local_frac_fsav = local_frac_im.get_fdata().squeeze()
-                        local_frac = fsavg.registration.resample(local_frac_fsav)
-                        infra_supra_model[model_type] = local_frac
-                elif "linear" in model_type:
-                    # NOTE: for the linear model the order matters! I'll keep it general now,
-                    # i.e., the order of the input files defines the parameter order.
-                    # For the models I have fitted it should be [intercept, k1, k2, k1k2]
-                    # I should find a better way to save this so that the function actually
-                    # predicting the surface now has fixed parameters.
-                    parameters_fsav = []
-                    for parameter_file in infra_supra_model_type_and_path[model_type]:
-                        param_im = nib.load(parameter_file)
-                        param_tmp = param_im.get_fdata().squeeze()
-                        parameters_fsav.append(param_tmp)
-
-                    parameters_fsav = np.array(parameters_fsav).transpose()
-                    parameters = fsavg.registration.resample(parameters_fsav)
-                    infra_supra_model[model_type] = parameters
+            model_fsav = load_model(
+                model_name[0], model_name[1], hemi, registration=model_name[2]
+            )
+            params_subject = Hemisphere._map_infra_supra_model_to_subject(
+                model_fsav[f"{model_name[0]}_{model_name[1]}"], registration=reg_surf
+            )
+            infra_supra_model = {f"{model_name[0]}_{model_name[1]}": params_subject}
 
             if not infra_supra_model:
-                print('Model loading failed, using the default (equivolume with fraction 0.5)')
-                infra_supra_model['equivolume_global'] = 0.5
+                print(
+                    "Model loading failed, using the default (equivolume with fraction 0.5)"
+                )
+                infra_supra_model["equivolume_global"] = 0.5
 
-        return cls(hemi, white_surf, pial_surf, sphere_surf, reg_surf, inf_surf, infra_supra_model=infra_supra_model)
+        return cls(
+            hemi,
+            white_surf,
+            pial_surf,
+            sphere_surf,
+            reg_surf,
+            inf_surf,
+            infra_supra_model=infra_supra_model,
+        )
 
 
 class Cortex:

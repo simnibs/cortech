@@ -11,3 +11,4 @@ python.install_sources(python_sources, subdir: 'cortech')
 
 subdir('cgal')
 subdir('freesurfer')
+subdir('models')
