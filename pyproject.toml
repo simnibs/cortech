@@ -39,7 +39,6 @@ test-command = "pytest {package}/tests"
 [tool.cibuildwheel.macos]
 before-all = "pip install conan && conan config install -tf profiles conan_profiles && conan install --profile:all darwin --build=missing --output-folder={package} ."
 
-
 [tool.cibuildwheel.linux]
 before-all = "pip install conan && conan config install -tf profiles conan_profiles && conan install --profile:all linux --build=missing --output-folder={package} ."
 
@@ -55,3 +54,5 @@ before-all = "pip install conan && conan config install -tf profiles conan_profi
 before-build = "pip install delvewheel"
 repair-wheel-command = "delvewheel repair -w {dest_dir} {wheel}"
 
+[project.scripts]
+fit_layers = "cortech.bin.fit_layers:main"

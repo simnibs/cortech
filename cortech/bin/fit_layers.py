@@ -2,7 +2,7 @@ import argparse
 import ast
 from pathlib import Path
 from cortech.cortex import Cortex, Hemisphere
-from cortech.surface import Surface
+from cortech.surface import Surface, Sphere
 
 
 def fit_layers(
@@ -34,13 +34,19 @@ def fit_layers(
     """
     # If input_surfaces is provided, create Hemisphere objects instead of Cortex
     if input_surfaces is not None:
-        surfaces_in = [Surface.from_file(path) for path in input_surfaces]
+        surfaces_in = [Surface.from_file(path) for path in input_surfaces[:2]]
         hemi = "lh" if "lh" in input_surfaces[0] else "rh"
-        hemispheres = [Hemisphere(hemi, *surfaces_in)]
+        sphere = Sphere.from_file(input_surfaces[-1])
+        hemispheres = [Hemisphere(hemi, *surfaces_in, registration=sphere)]
     else:
         # If freesurfer_dir exists, create a Cortex object
         cortex = (
-            Cortex.from_freesurfer_subject_dir(freesurfer_dir)
+            Cortex.from_freesurfer_subject_dir(
+                freesurfer_dir,
+                registration="sphere.reg"
+                if "spherical" in registration
+                else "josa.sphere.reg",
+            )
             if freesurfer_dir is not None
             else None
         )
@@ -74,9 +80,12 @@ def fit_layers(
                 surfaces = hemisphere.estimate_layers(
                     method="equidistance", frac=fractions, return_surface=True
                 )
+                if type(surfaces) is not tuple:
+                    surfaces = tuple([surfaces])
+
                 for frac, surface in zip(fractions, surfaces):
                     surface.save(
-                        Path(output_path) / f"{hemisphere}.{model_type}.{frac}"
+                        Path(output_path) / f"{hemisphere.name}.{model_type}.{frac}"
                     )
         elif layer_type == "infra-supra-border":
             model_name = (
@@ -92,9 +101,9 @@ def fit_layers(
                     else {"smooth_iter": 15},
                     return_surface=True,
                 )
-                infra_supra_surface.save(
+                infra_supra_surface[f"{model_name[0]}_{model_name[1]}"].save(
                     Path(output_path)
-                    / f"{hemisphere}.inf.{model_type}.{('global' if global_flag else 'local')}"
+                    / f"{hemisphere.name}.inf.{model_type}.{('global' if global_flag else 'local')}"
                 )
 
     elif model_type == "equivolume":
@@ -117,9 +126,11 @@ def fit_layers(
                 surfaces = hemisphere.estimate_layers(
                     method="equivolume", frac=fractions, return_surface=True
                 )
+                if type(surfaces) is not tuple:
+                    surfaces = tuple([surfaces])
                 for frac, surface in zip(fractions, surfaces):
                     surface.save(
-                        Path(output_path) / f"{hemisphere}.{model_type}.{frac}"
+                        Path(output_path) / f"{hemisphere.name}.{model_type}.{frac}"
                     )
         elif layer_type == "infra-supra-border":
             model_name = (
@@ -135,9 +146,9 @@ def fit_layers(
                     else {"smooth_iter": 15},
                     return_surface=True,
                 )
-                infra_supra_surface.save(
+                infra_supra_surface[f"{model_name[0]}_{model_name[1]}"].save(
                     Path(output_path)
-                    / f"{hemisphere}.inf.{model_type}.{('global' if global_flag else 'local')}"
+                    / f"{hemisphere.name}.inf.{model_type}.{('global' if global_flag else 'local')}"
                 )
 
     elif model_type == "linear_model":
@@ -145,7 +156,7 @@ def fit_layers(
             raise ValueError(
                 "For 'linear_model', layer_type must be 'infra-supra-border'."
             )
-        model_name = ("linear_model", registration, "local")
+        model_name = ("linear_model", "local", registration)
         for hemisphere in hemispheres:
             hemisphere.set_infra_supra_model(model_name)
             infra_supra_surface = hemisphere.fit_infra_supra_border(
@@ -154,8 +165,8 @@ def fit_layers(
                 else {"smooth_iter": 15},
                 return_surface=True,
             )
-            infra_supra_surface.save(
-                Path(output_path) / f"{hemisphere}.inf.{model_type}"
+            infra_supra_surface[f"{model_name[0]}_{model_name[1]}"].save(
+                Path(output_path) / f"{hemisphere.name}.inf.{model_type}"
             )
 
     else:
@@ -166,25 +177,25 @@ def fit_layers(
     return None
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         prog="fit_layers",
         description="Fit cortical layers based on the different models.",
         usage="""
         Usage examples:
         Fit three layers with volume fractions 0.1, 0.5, and 0.8 given the white and pial surface and save to an output path:
-        fit_layers equivolume --layer_type layers --fractions [0.1, 0.5, 0.8] --input_surfaces lh.white lh.pial --output_path /tmp/outpath
+        fit_layers equivolume --layer_type layers --fractions "[0.1, 0.5, 0.8]" --input_surfaces lh.white lh.pial lh.sphere.reg --output_path /tmp/outpath
 
         Fit two layers with volume fractions 0.2 and 0.6 given a path two a recon-all output (processes both hemispheres):
-        fit_layers equivolume --layer_type layers --fractions [0.2, 0.6] --freesurfer_dir $SUBJECTS_DIR/subid
+        fit_layers equivolume --layer_type layers --fractions "[0.2, 0.6]" --freesurfer_dir $SUBJECTS_DIR/subid
 
-        Fit the infra-supra border using a fitted local equdistance model (distance fractions fitted at each node of the fsaverage surface)
+        Fit the infra-supra border using a fitted local equdistance model (distance fractions fitted at each node of the fsaverage surface). Requires FreeSurfer.
         fit_layers equidistance --layer_type infra-supra-border --freesurfer_dir $SUBJECTS_DIR/subid
 
-        The same as above but use the equivolume model but with a single fitted global parameter over the whole cortex (--isglobal)
+        The same as above but use the equivolume model but with a single fitted global parameter over the whole cortex (--isglobal).
         fit_layers equivolume --layer_type infra-supra-border --isglobal --freesurfer_dir $SUBJECTS_DIR/subid
 
-        The same as above but use a linear model fitted to the local curvature and thickness
+        The same as above but use a linear model fitted to the local curvature and thickness. Requires FreeSurfer.
         fit_layers linear_model --layer_type infra-supra-border --freesurfer_dir $SUBJECTS_DIR/subid
 
         """,
@@ -231,8 +242,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_surfaces",
         type=str,
-        nargs=2,
-        help="Path to white and pial surfaces (in that order) for a hemi. Can be used instead of the freesurfer_dir, but needs output_dir to be defined.",
+        nargs=3,
+        help="Path to white and pial surfaces, and the spherical registration (in that order) for a hemi. Can be used instead of the freesurfer_dir, but needs output_dir to be defined.",
     )
 
     args = parser.parse_args()
@@ -249,3 +260,7 @@ if __name__ == "__main__":
         args.registration,
         args.input_surfaces,
     )
+
+
+if __name__ == "__main__":
+    main()
