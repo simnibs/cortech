@@ -16,6 +16,7 @@ jobs:
       # fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-14, windows-2022]
+        python-version: [3.11, 3.12, 3.13]
 
     if: ${{ startsWith(github.ref, 'refs/tags') || !contains(github.event.head_commit.message, '[skip ci]') }}
 
@@ -24,9 +25,8 @@ jobs:
 
     - name: Python - set up ${{ matrix.python-version }}
       uses: actions/setup-python@v5
-      strategy:
-        matrix:
-          python-version: [3.11, 3.12, 3.13]
+      with:
+        python-version: 3.11
 
       # We pass the meson_native file created by conan (containing setting
       # things like compiler etc.) to pip
@@ -81,3 +81,4 @@ jobs:
       with:
         name: cibw-wheels-${{ matrix.os }}
         path: ./wheelhouse/*.whl
+
