@@ -38,6 +38,9 @@ def fit_layers(
         hemi = "lh" if "lh" in input_surfaces[0] else "rh"
         sphere = Sphere.from_file(input_surfaces[-1])
         hemispheres = [Hemisphere(hemi, *surfaces_in, registration=sphere)]
+        for hemi in hemispheres:
+            hemi.white.smooth_taubin(n_iter=5, inplace=True)
+            hemi.pial.smooth_taubin(n_iter=5, inplace=True)
     else:
         # If freesurfer_dir exists, create a Cortex object
         cortex = (
@@ -51,6 +54,9 @@ def fit_layers(
             else None
         )
         hemispheres = [cortex.lh, cortex.rh]
+        for hemi in hemispheres:
+            hemi.white.smooth_taubin(n_iter=5, inplace=True)
+            hemi.pial.smooth_taubin(n_iter=5, inplace=True)
 
     if input_surfaces is None and freesurfer_dir is None:
         raise ValueError("FreeSurfer directory of input surfaces need to be provided")
