@@ -27,4 +27,9 @@ ANNOT = {
     "PALS_B12_Visuotopic",
     "Yeo2011_7Networks_N1000",
     "Yeo2011_17Networks_N1000",
+    "aparc.DKTAtlas",
+}
+
+STANDARD_ANNOT = {
+    "aparc",
 }

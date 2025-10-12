@@ -6,6 +6,7 @@ python_sources = [
     'surface.py',
     'utils.py',
     'visualization.py',
+    'interactive_visualization.py',
 ]
 python.install_sources(python_sources, subdir: 'cortech')
 

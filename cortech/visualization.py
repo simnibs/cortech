@@ -24,7 +24,11 @@ class SurfaceVisualizer:
         """
         assert cortech.freesurfer.HOME is not None, "Could not find FREESURFER_HOME"
 
-        self.subject_dir = cortech.freesurfer.HOME / "subjects" / subject
+        if subject in "fsaverage":
+            self.subject_dir = cortech.freesurfer.HOME / "subjects" / subject
+        else:
+            self.subject_dir = subject
+
         self.subpaths = {
             "surface": self.subject_dir / "surf",
             "morph_data": self.subject_dir / "surf",
@@ -58,9 +62,9 @@ class SurfaceVisualizer:
         }
 
 
-class FsAveragePlotter:
+class FsPlotter:
     def __init__(self, subject: str = "fsaverage", surface: str = "inflated"):
-        self.fsavg = SurfaceVisualizer(subject)
+        self.fssub = SurfaceVisualizer(subject)
         self.brain = self.surface_as_multiblock(surface)
         if surface == "inflated":
             self.brain["lh"].points[:, 0] -= np.abs(self.brain["lh"].points[:, 0].max())
@@ -69,17 +73,26 @@ class FsAveragePlotter:
 
     def surface_as_multiblock(self, surface):
         """Return the specified surface as a PyVista MultiBlock object."""
-        surf = self.fsavg.get_surface(surface)
+        surf = self.fssub.get_surface(surface)
         mb = pv.MultiBlock()
         for hemi in surf:
             mb[hemi] = pv.make_tri_mesh(surf[hemi]["points"], surf[hemi]["tris"])
         return mb
 
     def add_curvature(self):
-        curv = self.fsavg.get_morph_data("curv")
+        curv = self.fssub.get_morph_data("curv")
         for h in curv:
             self.brain[h]["curv"] = curv[h].astype(float)
             self.brain[h]["curv_bin"] = np.where(curv[h] > 0, 1 / 3, 2 / 3)
+
+    def add_standard_morphological_data(self):
+        for m in cortech.freesurfer.MORPH_DATA:
+            self.add_overlay(self.fssub.get_morph_data(m), m)
+
+    def add_annotation(self, annot):
+        assert annot in cortech.freesurfer.ANNOT
+        dict_tmp = self.fssub.get_annotation(annot)
+        self.add_overlay({'lh': dict_tmp['lh']['labels'], 'rh': dict_tmp['rh']['labels']}, annot)
 
     def add_overlay(self, data, name: str):
         for h in cortech.freesurfer.HEMISPHERES:
@@ -119,15 +132,13 @@ class FsAveragePlotter:
         plotter=None,
     ):
         name = name or "temporary scalars"
-        kw_brain = {}  # dict(
-        #            scalars="curv_bin", cmap="gray", clim=(0, 1), show_scalar_bar=False
-        #        )
+        kw_brain = {}
         if brain_kwargs:
             kw_brain.update(brain_kwargs)
         kw_overlay = dict(
             annotations={threshold: "Threshold"} if threshold else None,
             # cmap="jet" if use_abs else "hot",
-            # clim=None if use_abs else (0, None),
+            # clim=None,
         )
         if overlay_kwargs:
             kw_overlay.update(overlay_kwargs)
