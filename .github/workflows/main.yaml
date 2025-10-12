@@ -2,7 +2,7 @@ name: Build, Test, and Upload
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, exvivo_models ]
     tags:
       - v*
   pull_request:
@@ -16,6 +16,7 @@ jobs:
       # fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-14, windows-2022]
+        python-version: [3.11, 3.12, 3.13]
 
     if: ${{ startsWith(github.ref, 'refs/tags') || !contains(github.event.head_commit.message, '[skip ci]') }}
 
@@ -78,28 +79,6 @@ jobs:
 
     - uses: actions/upload-artifact@v4
       with:
-        name: cibw-wheels-${{ matrix.os }}
+        name: cibw-wheels-${{ matrix.os }}-${{ matrix.python-version }}
         path: ./wheelhouse/*.whl
 
-  publish:
-    name: Publish wheels on ${{ matrix.os }}
-    needs: build
-    permissions:
-      contents: write
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-14, windows-2022]
-
-    # OS not important here
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-    - name: Artifact - download
-      uses: actions/download-artifact@v4
-      with:
-        name: cibw-wheels-${{ matrix.os }}
-        path: ${{ github.workspace }}
-    - name: Artifact - Release
-      uses: softprops/action-gh-release@v2
-      with:
-        files: ${{ github.workspace }}/*.whl
