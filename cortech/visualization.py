@@ -3,6 +3,7 @@ import numpy as np
 import pyvista as pv
 
 import cortech.freesurfer
+from matplotlib.colors import ListedColormap
 
 class SurfaceVisualizer:
     def __init__(self, subject: str = "fsaverage"):
@@ -70,6 +71,7 @@ class FsPlotter:
             self.brain["lh"].points[:, 0] -= np.abs(self.brain["lh"].points[:, 0].max())
             self.brain["rh"].points[:, 0] += np.abs(self.brain["rh"].points[:, 0].min())
         self.overlays = self.brain.copy()
+        self.clut = {}
 
     def surface_as_multiblock(self, surface):
         """Return the specified surface as a PyVista MultiBlock object."""
@@ -92,7 +94,19 @@ class FsPlotter:
     def add_annotation(self, annot):
         assert annot in cortech.freesurfer.ANNOT
         dict_tmp = self.fssub.get_annotation(annot)
-        self.add_overlay({'lh': dict_tmp['lh']['labels'], 'rh': dict_tmp['rh']['labels']}, annot)
+        unique_labels = np.unique(dict_tmp['lh']['labels'])
+        unique_colors = dict_tmp['lh']['ctab'][unique_labels,:3] / 255
+        self.clut[annot] = ListedColormap(unique_colors.tolist())
+        #Re-label the labels so that the colormap can be directly indexed
+        dict_labels = {}
+        for hemi in ['lh', 'rh']:
+            unique_labels = np.unique(dict_tmp[hemi]['labels'])
+            relabeled_array = np.zeros_like(dict_tmp[hemi]['labels'])
+            for i, l in enumerate(unique_labels):
+                relabeled_array[dict_tmp[hemi]['labels'] == l] = i
+            dict_labels[hemi] = relabeled_array
+
+        self.add_overlay(dict_labels, annot)
 
     def add_overlay(self, data, name: str):
         for h in cortech.freesurfer.HEMISPHERES:

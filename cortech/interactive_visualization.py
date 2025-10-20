@@ -1,7 +1,7 @@
 import numpy as np
 import pyvista as pv
 from trame.widgets.vuetify3 import VSelect, VSlider
-
+import matplotlib as mpl
 
 class InteractivePlotter:
     def __init__(self, fssub, name=None):
@@ -54,10 +54,20 @@ class InteractivePlotter:
             self.plotter.scalar_bar.visibility = True
             self.fssub.overlays.set_active_scalars(scalars)
             data_tmp = np.hstack((self.fssub.overlays['lh'].active_scalars, self.fssub.overlays['rh'].active_scalars))
-            self.mapper.scalar_range = (
-                np.percentile(data_tmp, 5),
-                np.percentile(data_tmp, 95),
-            )
+            if scalars in self.annotations:
+                self.mapper.scalar_range = (
+                    np.min(data_tmp),
+                    np.max(data_tmp),
+                )
+                print(np.unique(self.fssub.overlays['lh'][scalars]))
+                self.mapper.lookup_table.cmap = self.fssub.clut[scalars]
+            else:
+                data_tmp = np.hstack((self.fssub.overlays['lh'].active_scalars, self.fssub.overlays['rh'].active_scalars))
+                self.mapper.scalar_range = (
+                    np.percentile(data_tmp, 5),
+                    np.percentile(data_tmp, 95),
+                )
+                self.mapper.lookup_table.cmap = mpl.colormaps['viridis']
 
         self.ctrl.view_update()
 
