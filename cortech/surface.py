@@ -880,10 +880,12 @@ class Surface:
 
         """
         arr = arr if arr is not None else self.vertices
+        assert arr.shape[0] == self.n_vertices
         out = arr if inplace else None
 
         A = self.compute_vertex_adjacency()
-        nn = A.sum(0)[:, None]  # A is symmetric
+        nn = A.sum(0)  # A is symmetric
+        nn = nn[:, None] if arr.ndim > 1 else nn
 
         return arr, A, nn, out
 
