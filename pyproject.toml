@@ -27,7 +27,7 @@ requires = [
 ]
 
 [tool.cibuildwheel]
-build = ["cp311-*", "cp312-*"]
+build = ["cp311-*", "cp312-*", "cp313-*"]
 archs = ["native"]
 
 # Install conan, create default profile, install dependencies

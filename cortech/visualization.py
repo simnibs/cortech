@@ -24,7 +24,7 @@ class SurfaceVisualizer:
         """
         assert cortech.freesurfer.HOME is not None, "Could not find FREESURFER_HOME"
 
-        if subject in "fsaverage":
+        if str(subject) in "fsaverage":
             self.subject_dir = cortech.freesurfer.HOME / "subjects" / subject
         else:
             self.subject_dir = subject

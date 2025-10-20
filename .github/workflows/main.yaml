@@ -16,7 +16,6 @@ jobs:
       # fail-fast: true
       matrix:
         os: [ubuntu-latest, macos-14, windows-2022]
-        python-version: [3.11, 3.12, 3.13]
 
     if: ${{ startsWith(github.ref, 'refs/tags') || !contains(github.event.head_commit.message, '[skip ci]') }}
 
@@ -79,6 +78,6 @@ jobs:
 
     - uses: actions/upload-artifact@v4
       with:
-        name: cibw-wheels-${{ matrix.os }}-${{ matrix.python-version }}
+        name: cibw-wheels-${{ matrix.os }}
         path: ./wheelhouse/*.whl
 

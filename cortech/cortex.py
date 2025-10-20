@@ -481,6 +481,101 @@ class Hemisphere:
         if self.inf is not None:
             self.inf.save((out_dir / f"{self.name}.{inf}").with_suffix(ext))
 
+
+    def compute_surface_gradients(self, data: npt.NDArray[float], surface_name="white", neighborhood_size=1) -> None:
+
+        """Fit a plane to each node (and its neighbors) to approximate the first order gradients.
+        Basically for each node we are solving:
+
+        |x1 - x0, y1 - y0, z1 - z0, 1|   |grad_x(f)_(x0,y0,z0)|    |f(x1, y1, z1)|
+        |x2 - x0. y1 - y0, z1 - z0, 1|   |grad_y(f)_(x0,y0,z0)|    |f(x2, y2, z1)|
+        |   .        .        .     .| * |grad_z(f)_(x0,y0,z0)|  = |     .       |
+        |   .        .        .     .|   |f(x0, y0, z0)       |    |     .       |
+        |xn - x0, yn - y0, zn - z0, 1|                             |f(xn, yn, zn)|
+
+        Obviously using the MRI world coordinate system is maybe not the best for this
+        because we presumably would like to have these gradients along the surface.
+        A more natural coordinate system for the cortex is perhaps the one spanned
+        by the principal curvature directions. Once we have those we just project
+        the coordinates on the left hand side to that coordinate system and solve.
+
+        Parameters
+        ----------
+        surf: Hemisphere
+                    A hemisphere object storing the surfaces
+        data: np.array(float)
+                    Some data that lives on the nodes of the
+                    surface of which gradient we are interested in.
+            neighborhood_size: int
+                    Size of the neighborhood over which the gradient is computed.
+        Returns:
+        coeffs: np.array(float)
+                    A nodes x 3 array that stores the first order
+                    gradient of the data projected to the principal
+                    curvature directions along with the bias or
+                    constant term.
+        """
+
+        # Get the principal curvature directions
+        surf_tmp = getattr(self, surface_name)
+        _, E = surf_tmp.compute_principal_curvatures()
+
+        # The unknowns (3x1), two gradients and the bias
+        num_params = 2
+        coeffs = np.zeros((surf_tmp.n_vertices, num_params))
+
+        # number of neighbors
+        knn, kr = surf_tmp.k_ring_neighbors(neighborhood_size)
+        m = np.array([x.size for x in knn])
+        muq = np.unique(m)
+
+
+        # Loop over the nodes with the same amount of neighbors
+        # This way we can solve all the linear systems with the
+        # same size at the same time.
+        for mm in muq:
+            i = np.where(m == mm)[0]
+
+            # Get the neighbor indices
+            nid = np.array([knn[j][kr[j,1]:kr[j,2]] for j in i])
+
+            # Get the coordinates of the neighbors in MRI space
+            coords_neighbors = surf_tmp.vertices[nid, ...]
+            coords_neighbors = np.moveaxis(coords_neighbors, 0, 1)
+
+            # Get the coordinates of the center nodes
+            coords_centers = surf_tmp.vertices[i, ...]
+
+            # Compute the difference
+            coord_difference = coords_neighbors - coords_centers
+
+            # Get the principal curvature directions, at the center
+            E_tmp = E[i, ...].swapaxes(0,1)
+
+            # Project the coordinates to curvature directions
+            projected = np.einsum('ijk,ljk->ilj',E_tmp,coord_difference)
+
+            # Massage this to the correct form (nodes x ngbrs x coeffs)
+            projected = projected.swapaxes(0,-1)
+
+            # Do the linear fit node-wise
+            U, S, Vt = np.linalg.svd(projected, full_matrices=False)
+
+            # Get the target values at the nodes we are dealing with
+            neighbor_data = data[nid, ...].swapaxes(0,1)
+            center_node_data = data[i, ...]
+            data_difference = neighbor_data - center_node_data
+            data_difference = data_difference.swapaxes(0,1)
+
+            betas_tmp = np.squeeze(
+                Vt.swapaxes(1, 2)
+                @ (U.swapaxes(1, 2) @ data_difference[..., None] / S[..., None])
+            )
+
+            coeffs[i, :] = betas_tmp
+
+        return coeffs
+
     @classmethod
     def from_freesurfer_subject_dir(
         cls,
