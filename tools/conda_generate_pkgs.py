@@ -36,7 +36,9 @@ def conda_pkgconfig_generator(out_dir=None):
     Libs: -L${libdir} -lfoo
 
     """
-    assert "CONDA_PREFIX" in os.environ, "This is a convenience function for generating pkg-config files for libraries in a CONDA installation."
+    assert "CONDA_PREFIX" in os.environ, (
+        "This is a convenience function for generating pkg-config files for libraries in a CONDA installation."
+    )
     prefix = Path(os.environ["CONDA_PREFIX"])
 
     # dir where conda stores pkg-config files (.pc) from packages here
@@ -58,9 +60,10 @@ def conda_pkgconfig_generator(out_dir=None):
 
     prefixes = dict(prefix=prefix, exec_prefix=exec_prefix)
     packages = dict(
-        boost = prefixes | dict(inc_subdir="include"),
-        cgal = prefixes | dict(inc_subdir="include", requires = "boost >= 1.74 eigen >= 3.4 mpfr >= 4.2"),
-        eigen = prefixes | dict(inc_subdir = "include/eigen3"),
+        boost=prefixes | dict(inc_subdir="include"),
+        cgal=prefixes
+        | dict(inc_subdir="include", requires="boost >= 1.74 eigen >= 3.4 mpfr >= 4.2"),
+        eigen=prefixes | dict(inc_subdir="include/eigen3"),
         # tbb = prefixes | dict(lib_subdir="lib", inc_subdir="include", libs=["tbb", "tbbmalloc"])
     )
 
@@ -78,7 +81,7 @@ def conda_pkgconfig_generator(out_dir=None):
             f.write(content)
 
     if len(pkg_config) > 0:
-        print(f"Wrote pkg-config files for\n")
+        print("Wrote pkg-config files for\n")
         for name, settings in packages.items():
             print(f"    {name:10s} {settings['version']:10s}")
         print()
@@ -108,19 +111,26 @@ def make_pkg_config(
         out += f"\nincludedir=${{prefix}}/{inc_subdir}"
     if bin_subdir:
         out += f"\nbindir=${{exec_prefix}}/{bin_subdir}"
-    out += "\n".join(["\n", f"Name: {name:s}", f"Description: {description:s}", f"Version: {version:s}"])
+    out += "\n".join(
+        [
+            "\n",
+            f"Name: {name:s}",
+            f"Description: {description:s}",
+            f"Version: {version:s}",
+        ]
+    )
     if requires:
-        out += f"\nRequires: {requires:s}"
+        out += "\nRequires: {requires:s}"
     if lib_subdir or libs:
-        out += f"\nLibs:"
+        out += "\nLibs:"
         if lib_subdir:
-            out += f" -L${{libdir}}"
+            out += " -L${{libdir}}"
         if libs:
             out += " " + " ".join([f"-l{lib}" for lib in libs])
     if inc_subdir or cflags:
-        out +=  f"\nCflags:"
+        out += "\nCflags:"
         if inc_subdir:
-            out += f" -I${{includedir}}"
+            out += " -I${{includedir}}"
         if cflags:
             out += f" {cflags}"
     out += "\n"
@@ -140,9 +150,9 @@ def get_package_version(name):
         )
     elif len(info) > 1:
         if name == "tbb":
-            info = info[:1] # tbb and tbb-devel so choose tbb
+            info = info[:1]  # tbb and tbb-devel so choose tbb
         elif name == "boost":
-            info = info[:1] # libboost, libboost-devel, libboost-headers
+            info = info[:1]  # libboost, libboost-devel, libboost-headers
         else:
             raise RuntimeError(
                 f"Found multiple conda packages for {name}. conda list returned\n{out.stdout.decode()}"
@@ -155,12 +165,13 @@ def get_package_version(name):
 def parse_args(argv):
     parser = argparse.ArgumentParser(
         "generate_pkg",
-        description="Generate .pc files for boost, eigen, and CGAL when installed from conda."
+        description="Generate .pc files for boost, eigen, and CGAL when installed from conda.",
     )
     parser.add_argument(
         "-d", "--out-dir", help="Directory in which to store the generate .pc files."
     )
     return parser.parse_args(argv)
+
 
 if __name__ == "__main__":
     args = parse_args(sys.argv[1:])

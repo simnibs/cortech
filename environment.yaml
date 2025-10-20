@@ -3,10 +3,12 @@ channels:
   - conda-forge
 dependencies:
   - python = 3.11
+  - cgal-cpp >= 6.0
   - cython
   - meson-python
   - nibabel
   - numba
   - numpy
+  - pkg-config
   - pyvista
   - scipy

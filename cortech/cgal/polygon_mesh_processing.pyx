@@ -355,7 +355,7 @@ def intersecting_meshes(
 def connected_components(
         vertices: npt.ArrayLike,
         faces: npt.ArrayLike,
-        constrained_faces: Union[npt.ArrayLike, None] = None
+        constrained_faces: npt.ArrayLike | None = None
     ) -> tuple[npt.NDArray, npt.NDArray]:
     """Label connected components on a surface (graph).
 
@@ -378,9 +378,10 @@ def connected_components(
     component_size : npt.NDArray
         The size associated with each label.
     """
+    constrained_faces = [] if constrained_faces is None else constrained_faces
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_constrained_faces = np.ascontiguousarray(constrained_faces or [], dtype=np.int32)
+    cdef np.ndarray[int] cpp_constrained_faces = np.ascontiguousarray(constrained_faces, dtype=np.int32)
     cdef pair[vector[int], vector[int]] out
 
     out = pmp_connected_components(cpp_v, cpp_f, cpp_constrained_faces)
@@ -433,9 +434,11 @@ def smooth_shape(
     https://doc.cgal.org/latest/Polygon_mesh_processing/
     https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#ga57fa999abe8dc557003482444df2a189
     """
+    constrained_vertices = [] if constrained_vertices is None else constrained_vertices
+
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices or [], dtype=np.int32)
+    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices, dtype=np.int32)
     cdef vector[vector[float]] v
 
     v = pmp_smooth_shape(cpp_v, cpp_f, cpp_constrained_vertices, time, n_iter)

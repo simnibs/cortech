@@ -114,52 +114,52 @@ class Hemisphere:
         vol_frac: float | npt.NDArray = 0.5,
     ):
         """Compute the distance fraction (between inner and outer surface whose
-                distance is `thickness`) which yields the desired volume fraction at each
-                position.
+        distance is `thickness`) which yields the desired volume fraction at
+        each position.
 
-                Parameters
-                ----------
-                curv : npt.NDArray
-                    Curvature estimate at each position.
-                thickness : npt.NDArray
-                    Thickness estimate at each position.
-                vol_frac : float | npt.NDArray
-                    The desired volume fraction(s). If a float, estimate a single
-                    distance fraction per vertex. If an ndarray with one dimension,
-                    assume that `vol_frac` gives a number of fractions to estimate for
-                    each vertex. If an ndarray with two dimensions, assume that
-                    `vol_frac` is (n_frac, n_vertices), i.e., the fraction is provided
-                    explicitly for each vertex (default = 0.5).
+        Parameters
+        ----------
+        curv : npt.NDArray
+            Curvature estimate at each position.
+        thickness : npt.NDArray
+            Thickness estimate at each position.
+        vol_frac : float | npt.NDArray
+            The desired volume fraction(s). If a float, estimate a single
+            distance fraction per vertex. If an ndarray with one dimension,
+            assume that `vol_frac` gives a number of fractions to estimate for
+            each vertex. If an ndarray with two dimensions, assume that
+            `vol_frac` is (n_frac, n_vertices), i.e., the fraction is provided
+            explicitly for each vertex (default = 0.5).
 
-                Returns
-                -------
-                dist_frac : npt.NDArray
-                    Position-wise distance fraction which yields the desired volume
-                    fraction.
+        Returns
+        -------
+        dist_frac : npt.NDArray
+            Position-wise distance fraction which yields the desired volume
+            fraction.
 
-                Notes
-                -----
-                We expect positive curvature in sulci and negative curvature on gyral
-                crowns.
-        white
-                On gyral crowns, the curvature is negative because the surface bends away
-                from the normals. Since a radius must be positive, we ignore the sign when
-                computing the radius of the sphere which gives the desired volume fraction.
+        Notes
+        -----
+        We expect positive curvature in sulci and negative curvature on gyral
+        crowns.
 
-                In the sulci, the curvature is positive as the surface bends towards the
-                normal. However, we are still placing the center of the sphere on the side
-                of the white matter (there is nothing to distinguish concave and convex
-                when we ignore the sign of the curvature). Assuming the sphere was placed
-                on the pial side, we could find the desired volume fraction by first
-                estimating the radius of the sphere at 1-frac (since 1-vol_frac from the
-                outer side is vol_frac from the inner side) and then subtract this
-                (relative to the inner radius) from the thickness to get a distance from
-                the inner surface rather than the outer.
+        On gyral crowns, the curvature is negative because the surface bends away
+        from the normals. Since a radius must be positive, we ignore the sign when
+        computing the radius of the sphere which gives the desired volume fraction.
 
-                References
-                ----------
-                Michiel Kleinnijenhuis et al. (2015). Diffusion tensor characteristics of
-                    gyrencephaly using high resolution diffusion MRI in vivo at 7T.
+        In the sulci, the curvature is positive as the surface bends towards the
+        normal. However, we are still placing the center of the sphere on the side
+        of the white matter (there is nothing to distinguish concave and convex
+        when we ignore the sign of the curvature). Assuming the sphere was placed
+        on the pial side, we could find the desired volume fraction by first
+        estimating the radius of the sphere at 1-frac (since 1-vol_frac from the
+        outer side is vol_frac from the inner side) and then subtract this
+        (relative to the inner radius) from the thickness to get a distance from
+        the inner surface rather than the outer.
+
+        References
+        ----------
+        Michiel Kleinnijenhuis et al. (2015). Diffusion tensor characteristics of
+            gyrencephaly using high resolution diffusion MRI in vivo at 7T.
         """
         frac = np.atleast_1d(vol_frac)
 
