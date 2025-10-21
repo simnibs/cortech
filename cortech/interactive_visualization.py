@@ -54,7 +54,6 @@ class InteractivePlotter:
         else:
             self.actor.visibility = True
             self.plotter.scalar_bar.title = scalars
-            self.plotter.scalar_bar.visibility = True
             self.fssub.overlays.set_active_scalars(scalars)
             data_tmp = np.hstack((self.fssub.overlays['lh'].active_scalars, self.fssub.overlays['rh'].active_scalars))
             if scalars in self.annotations:
@@ -72,6 +71,7 @@ class InteractivePlotter:
                 )
                 self.mapper.lookup_table.cmap = mpl.colormaps['viridis']
 
+        self.plotter.scalar_bar.visibility = True
         self.ctrl.view_update()
 
     def custom_tools(self):
