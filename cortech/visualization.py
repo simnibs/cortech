@@ -100,7 +100,7 @@ class FsPlotter:
         #Re-label the labels so that the colormap can be directly indexed
         dict_labels = {}
         for hemi in ['lh', 'rh']:
-            unique_labels = np.unique(dict_tmp[hemi]['labels'])
+            unique_labels = np.unique(dict_tmp['lh']['labels'])
             relabeled_array = np.zeros_like(dict_tmp[hemi]['labels'])
             for i, l in enumerate(unique_labels):
                 relabeled_array[dict_tmp[hemi]['labels'] == l] = i
