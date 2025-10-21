@@ -2,6 +2,7 @@ import numpy as np
 import pyvista as pv
 from trame.widgets.vuetify3 import VSelect, VSlider
 import matplotlib as mpl
+from cortech import freesurfer
 
 class InteractivePlotter:
     def __init__(self, fssub, name=None):
@@ -10,6 +11,8 @@ class InteractivePlotter:
 
         self.plotter = pv.Plotter(notebook=True, off_screen=True)
         self.plotter.theme.jupyter_backend = "client"
+
+        self.annotations = freesurfer.ANNOT
 
         kw_brain = dict(
             scalars="curv_bin", cmap="gray", clim=(0, 1), show_scalar_bar=False
