@@ -61,7 +61,6 @@ class InteractivePlotter:
                     np.min(data_tmp),
                     np.max(data_tmp),
                 )
-                print(np.unique(self.fssub.overlays['lh'][scalars]))
                 self.mapper.lookup_table.cmap = self.fssub.clut[scalars]
             else:
                 data_tmp = np.hstack((self.fssub.overlays['lh'].active_scalars, self.fssub.overlays['rh'].active_scalars))
