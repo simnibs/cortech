@@ -980,8 +980,8 @@ class Surface:
         n_iter: int = 1,
         inplace: bool = False,
     ):
-        """Perform Taubin smoothing, i.e., a positive (standard) Gaussian
-        smoothing step (`a`) followed by a Gaussian step with negative weight
+        """Perform Taubin smoothing, i.e., Gaussian smoothing step with
+        positive weight (`a`) followed by a Gaussian step with negative weight
         (`b`).
 
         References
@@ -997,7 +997,7 @@ class Surface:
 
         if apply_to_vertices:
             if inplace:
-                return None
+                self.vertices = arr
             else:
                 return self.new_from(arr)
         else:
