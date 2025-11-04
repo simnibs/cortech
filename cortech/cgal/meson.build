@@ -41,6 +41,15 @@ pmp = python.extension_module(
 )
 
 pmp = python.extension_module(
+    'alpha_wrap_3',
+    cython_gen_cpp.process('alpha_wrap_3.pyx'),
+    cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
+    dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep],
+    install: true,
+    subdir: cgal_dir,
+)
+
+pmp = python.extension_module(
     'convex_hull_3',
     cython_gen_cpp.process('convex_hull_3.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
