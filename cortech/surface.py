@@ -948,8 +948,7 @@ class Surface:
         n_iter: int = 1,
         inplace: bool = False,
     ):
-        """Perform shape smoothing via mean curvature flow (preserving vertex
-        density).
+        """Perform shape smoothing via mean curvature flow.
 
         Parameters
         ----------
@@ -966,6 +965,59 @@ class Surface:
         """
         v = pmp.smooth_shape(
             self.vertices, self.faces, constrained_vertices, time, n_iter
+        )
+        if inplace:
+            self.vertices = v
+        else:
+            return self.new_from(v)
+
+    def smooth_shape_by_curvature_threshold(
+        self,
+        time: float = 0.1,
+        n_iter: int = 1,
+        curv_threshold: float = 0.0,
+        apply_above_curv_threshold: bool = True,
+        ball_radius: float = -1.0,
+        inplace: bool = False,
+    ):
+        """Perform shape smoothing via mean curvature flow while constraining
+        vertices whose curvature is either above or below a certain threshold.
+        This allows strict shrinking or inflation of the surface whereas the
+        standard mean curvature flow of vertices (as performed by
+        `smooth_shape`) will shrink convex areas and inflate concave areas. The
+        default settings (`curv_threshold = 0.0` and
+        `apply_above_curv_threshold = True`) results in strict shrinkage.
+
+        Parameters
+        ----------
+        time : float
+            Amount of smoothing to apply at each iteration (higher values means
+            more aggressive smoothing).
+        n_iter : int
+            Number of curvature estimation and smoothing steps to apply.
+        curv_threshold : float
+            Apply smoothing to vertices above/below `curv_threshold` (default = 0.0).
+        apply_above_curv_threshold : bool
+            If true, apply smoothing to vertices whose curvature is *above*
+            `curv_threshold` (and vice verse if false) (default = True). If
+            true (and curv_threshold = 0.0), the surface will strictly shrink.
+        ball_radius : float
+            Smooth curvature estimates within a ball with `ball_radius`. Must
+            be > 0.0 except -1.0 which disables smoothing (default = -1.0).
+        inplace : bool
+
+        References
+        ----------
+        https://doc.cgal.org/latest/Polygon_mesh_processing/index.html
+        """
+        v = pmp.smooth_shape_by_curvature(
+            self.vertices,
+            self.faces,
+            time,
+            n_iter,
+            curv_threshold,
+            apply_above_curv_threshold,
+            ball_radius,
         )
         if inplace:
             self.vertices = v
@@ -1367,6 +1419,47 @@ class Surface:
         else:
             v = self.vertices
         return v
+
+    @classmethod
+    def from_point_set(
+        cls,
+        points: npt.NDArray,
+        alpha: float = 100.0,
+        offset: float = 500.0,
+        relative: bool = True,
+    ):
+        """Generate a surface from a point cloud by alpha wrapping.
+
+        Parameters
+        ----------
+        points : _type_
+            Points to be alpha wrapped.
+        alpha : _type_
+            Controls the size of the output triangles (smaller value, smaller
+            triangles).
+        offset : _type_
+            Controls how tight the points should be wrapped (smaller value,
+            better approximation of object).
+        relative : bool, optional
+            If true, `alpha` and `offset` are interpreted as relative to the
+            diagonal length of the bounding box of `points`, i.e.,
+
+                alpha = diagonal_length / alpha
+                offset = diagonal_length / offset
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+
+        if relative:
+            diag_length = np.linalg.norm(points.max(0) - points.min(0))
+            alpha = diag_length / alpha
+            offset = diag_length / offset
+
+        v, f = cortech.cgal.alpha_wrap_3.alpha_wrap_3(points, alpha, offset)
+        return cls(v, f)
 
     def plot(self, scalars=None, mesh_kwargs=None, plotter_kwargs=None):
         # only works when pyvista is installed

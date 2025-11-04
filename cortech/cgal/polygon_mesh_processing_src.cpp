@@ -219,7 +219,8 @@ CGAL_t::vecvec<float> pmp_interpolated_corrected_curvatures(CGAL_t::vecvec<float
     boost::tie(principal_curv_and_dir_map, created) = mesh.add_property_map<vertex_descriptor, PMP::Principal_curvatures_and_directions<K>>("v:principal_curv_and_dir_map", {0, 0, K::Vector_3(0, 0, 0), K::Vector_3(0, 0, 0)});
     assert(created);
 
-    PMP::orient(mesh); // ensure outwards pointing normals
+    // PMP::orient(mesh); // ensure outwards pointing normals
+
     PMP::interpolated_corrected_curvatures(mesh,
                                            CGAL::parameters::vertex_mean_curvature_map(mean_curv_map)
                                                .vertex_Gaussian_curvature_map(gaussian_curv_map)
@@ -261,7 +262,7 @@ std::vector<bool> pmp_points_inside_surface(
     std::size_t n_points = mesh.number_of_vertices();
     std::vector<bool> is_inside(n_points, false);
 
-    for (std::size_t i = 0; i < n_points; ++i)
+    for (std::size_t i = 0; i < n_points; i++)
     {
         auto p = K::Point_3(points[i][0], points[i][1], points[i][2]);
 
@@ -502,6 +503,72 @@ CGAL_t::vecvec<float> pmp_smooth_shape(
     return vertices_out;
 }
 
+CGAL_t::vecvec<float> pmp_smooth_shape_by_curvature_threshold(
+    CGAL_t::vecvec<float> vertices,
+    CGAL_t::vecvec<int> faces,
+    const double time,
+    const unsigned int nb_iterations,
+    const double curv_threshold = 0.0,
+    bool apply_above_curv_threshold = true,
+    const double ball_radius = -1.0)
+{
+    // use an expansion ball radius of `ball_radius` to estimate the curvatures
+    // -1.0 disables curvature smoothing
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+
+    // define property map to store curvature value and directions
+    Surface_mesh::Property_map<vertex_descriptor, K::FT> mean_curv_map;
+    // creating and tying surface mesh property maps for curvatures (with defaults = 0)
+    bool created = false;
+    boost::tie(mean_curv_map, created) = mesh.add_property_map<vertex_descriptor, K::FT>("v:mean_curv_map", 0);
+    assert(created);
+
+    // PMP::orient(mesh); // ensure outwards pointing normals
+
+    for (int i = 0; i < nb_iterations; i++)
+    {
+        PMP::interpolated_corrected_curvatures(
+            mesh,
+            CGAL::parameters::vertex_mean_curvature_map(mean_curv_map)
+                .ball_radius(ball_radius));
+
+        // constrain the relevant vertices
+        std::set<vertex_descriptor> indices;
+        for (auto v : mesh.vertices())
+        {
+            float H = (float)get(mean_curv_map, v);
+            if ((apply_above_curv_threshold && (H < curv_threshold)) || (!apply_above_curv_threshold && (H > curv_threshold)))
+            {
+                indices.insert(v);
+            }
+        }
+
+        CGAL::Boolean_property_map<std::set<vertex_descriptor>> vcmap(indices);
+        PMP::smooth_shape(
+            mesh,
+            time,
+            CGAL::parameters::vertex_is_constrained_map(vcmap));
+
+        // if (remesh_nb_iterations > 0){
+        //     PMP::isotropic_remeshing(
+        //         mesh.faces(),
+        //         remesh_edge_length,
+        //         mesh,
+        //         CGAL::parameters::number_of_iterations(remesh_nb_iterations));
+
+        //     // explicit garbage collection needed as vertices are only *marked* as removed
+        //     //
+        //     //   https://github.com/CGAL/cgal/discussions/6625
+        //     //   https://doc.cgal.org/latest/Surface_mesh/index.html#sectionSurfaceMesh_memory
+        //     mesh.collect_garbage();
+        // }
+    }
+
+    auto vertices_out = CGAL_sm::extract_vertices(mesh);
+
+    return vertices_out;
+}
+
 CGAL_t::vecvec<float> pmp_smooth_angle_and_area(
     CGAL_t::vecvec<float> vertices,
     CGAL_t::vecvec<int> faces,
@@ -533,33 +600,25 @@ CGAL_t::vecvec<float> pmp_smooth_angle_and_area(
     return vertices_out;
 }
 
-// CGAL_t::vecvec<float> pmp_fair(
-//     CGAL_t::vecvec<float> vertices,
-//     CGAL_t::vecvec<int> faces,
-//     std::vector<int> indices)
-// {
-//     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+CGAL_t::vecvec<float> pmp_fair(
+    CGAL_t::vecvec<float> vertices,
+    CGAL_t::vecvec<int> faces,
+    std::vector<int> indices)
+{
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
-//     CGAL::Real_timer timer;
-//     timer.start();
+    std::set<vertex_descriptor> vertex_indices;
+    for (int i : indices)
+    {
+        vertex_indices.insert((vertex_descriptor)i);
+    }
+    CGAL::Boolean_property_map<std::set<vertex_descriptor>> vcmap(vertex_indices);
 
-//     std::set<vertex_descriptor> vertex_indices;
-//     for (int i : indices)
-//     {
-//         vertex_indices.insert((vertex_descriptor)i);
-//     }
-//     std::cout << "fairing " << vertex_indices.size() << " vertices" << std::endl;
-//     CGAL::Boolean_property_map<std::set<vertex_descriptor>> vcmap(vertex_indices);
+    auto success = PMP::fair(mesh, vertex_indices);
+    auto vertices_faired = CGAL_sm::extract_vertices(mesh);
 
-//     auto success = PMP::fair(mesh, vertex_indices);
-
-//     std::cout << "Fairing : " << (success ? "succeeded" : "failed") << std::endl;
-//     std::cout << "Elapsed time (fairing): " << timer.time() << std::endl;
-
-//     auto vertices_faired = CGAL_sm::extract_vertices(mesh);
-
-//     return vertices_faired;
-// }
+    return vertices_faired;
+}
 
 std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
     CGAL_t::vecvec<float> vertices,

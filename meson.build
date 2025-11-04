@@ -1,5 +1,5 @@
 project(
-    'Cortech',
+    'cortech',
     'cpp', 'cython',
     version: '0.1',
     meson_version: '>= 1.2',
@@ -7,7 +7,7 @@ project(
         'buildtype=debugoptimized',
         'b_ndebug=if-release',
         # 'c_std=c99',
-        # 'cpp_std=c++14',
+        'cpp_std=c++17',
     ],
 )
 

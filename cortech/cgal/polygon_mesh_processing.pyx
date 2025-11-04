@@ -77,6 +77,16 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         int n_iter
     )
 
+    vector[vector[float]] pmp_smooth_shape_by_curvature_threshold(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+        double time,
+        int n_iter,
+        double curv_threshold,
+        cppbool apply_above_curv_threshold,
+        double ball_radius,
+    )
+
     vector[vector[float]] pmp_tangential_relaxation(
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
@@ -100,11 +110,11 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         cppbool use_safety_constraints
     )
 
-    # vector[vector[float]] pmp_fair(
-    #     vector[vector[float]] vertices,
-    #     vector[vector[int]] faces,
-    #     vector[int] indices,
-    # )
+    vector[vector[float]] pmp_fair(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+        vector[int] indices,
+    )
 
     pair[vector[vector[float]], vector[vector[int]]] pmp_isotropic_remeshing(
         vector[vector[float]] vertices,
@@ -445,6 +455,62 @@ def smooth_shape(
 
     return np.array(v, dtype=float)
 
+def smooth_shape_by_curvature_threshold(
+        vertices: npt.ArrayLike,
+        faces: npt.ArrayLike,
+        time: float = 0.1,
+        n_iter: int = 1,
+        curv_threshold: float = 0.0,
+        apply_above_curv_threshold: bool = True,
+        ball_radius: float = -1.0,
+    ) -> npt.NDArray:
+    """Mean curvature flow constraining vertices whose curvature is either
+    above or below a certain threshold. This allows strict shrinking or
+    inflation of the surface whereas the standard mean curvature flow of
+    vertices (as performed by `smooth_shape`) will shrink convex areas and
+    inflate concave areas.
+    The default settings (`curv_threshold = 0.0` and
+    `apply_above_curv_threshold = True`) results in strict shrinkage.
+
+    Parameters
+    ----------
+    vertices
+        Vertices of the surface.
+    faces
+        Faces of the surface.
+    time : float
+        Amount of smoothing to apply at each iteration (higher values means
+        more aggressive smoothing).
+    n_iter : int
+        Number of curvature estimation and smoothing steps to apply.
+    curv_threshold : float
+        Apply smoothing to vertices above/below `curv_threshold` (default = 0.0).
+    apply_above_curv_threshold : bool
+        If true, apply smoothing to vertices whose curvature is *above*
+        `curv_threshold` (and vice verse if false) (default = True). If
+        true (and curv_threshold = 0.0), the surface will strictly shrink.
+    ball_radius : float
+        Smooth curvature estimates within a ball with `ball_radius`. Must
+        be > 0.0 except -1.0 which disables smoothing (default = -1.0).
+
+    Returns
+    -------
+    The smoothed vertices.
+
+    References
+    ----------
+    https://doc.cgal.org/latest/Polygon_mesh_processing/
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#ga57fa999abe8dc557003482444df2a189
+    """
+    assert ball_radius == -1.0 or ball_radius > 0.0
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef cppbool cpp_apply_above_curv_threshold = apply_above_curv_threshold
+    cdef vector[vector[float]] v
+
+    v = pmp_smooth_shape_by_curvature(cpp_v, cpp_f, time, n_iter, curv_threshold, cpp_apply_above_curv_threshold, ball_radius)
+
+    return np.array(v, dtype=float)
 
 def interpolated_corrected_curvatures(vertices: npt.ArrayLike, faces: npt.ArrayLike):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -540,16 +606,16 @@ def smooth_angle_and_area(
     return np.array(v, dtype=float)
 
 
-# def fair(vertices, faces, vertex_indices):
-#     """Mesh fairing."""
-#     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
-#     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-#     cdef np.ndarray[int] cpp_vi = np.ascontiguousarray(vertex_indices, dtype=np.int32)
-#     cdef vector[vector[float]] v
+def fair(vertices, faces, vertex_indices):
+    """Mesh fairing."""
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_vi = np.ascontiguousarray(vertex_indices, dtype=np.int32)
+    cdef vector[vector[float]] v
 
-#     v = pmp_fair(cpp_v, cpp_f, cpp_vi)
+    v = pmp_fair(cpp_v, cpp_f, cpp_vi)
 
-#     return np.array(v, dtype=float)
+    return np.array(v, dtype=float)
 
 
 def isotropic_remeshing(
