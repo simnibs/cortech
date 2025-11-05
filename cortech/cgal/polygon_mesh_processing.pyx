@@ -508,7 +508,7 @@ def smooth_shape_by_curvature_threshold(
     cdef cppbool cpp_apply_above_curv_threshold = apply_above_curv_threshold
     cdef vector[vector[float]] v
 
-    v = pmp_smooth_shape_by_curvature(cpp_v, cpp_f, time, n_iter, curv_threshold, cpp_apply_above_curv_threshold, ball_radius)
+    v = pmp_smooth_shape_by_curvature_threshold(cpp_v, cpp_f, time, n_iter, curv_threshold, cpp_apply_above_curv_threshold, ball_radius)
 
     return np.array(v, dtype=float)
 
