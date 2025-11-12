@@ -5,28 +5,27 @@
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Surface_mesh.h>
+// domains
+#include <CGAL/Polyhedral_mesh_domain_3.h>
+#include <CGAL/Polyhedral_complex_mesh_domain_3.h>
+// #include <CGAL/Polyhedral_mesh_domain_with_features_3.h>
 
 #include <CGAL/Mesh_complex_3_in_triangulation_3.h>
 #include <CGAL/Mesh_criteria_3.h>
 #include <CGAL/Mesh_triangulation_3.h>
-
-#include <CGAL/Polyhedral_mesh_domain_3.h>
-#include <CGAL/Polyhedral_mesh_domain_with_features_3.h>
 #include <CGAL/make_mesh_3.h>
-// #include <CGAL/3D_Mesh_3/Facets_in_complex_3_to_triangle_mesh.h>
+
+#include <CGAL/facets_in_complex_3_to_triangle_mesh.h>
 #include <CGAL/remove_far_points_in_mesh_3.h>
 #include <cgal_helpers.h>
 // #include <CGAL/IO/File_medit.h>
 
-#include <CGAL/Polyhedron_3.h>
+// polyhedron
+// #include <CGAL/Polyhedron_3.h>
 #include <CGAL/Polyhedron_incremental_builder_3.h>
 
 using K = CGAL::Exact_predicates_inexact_constructions_kernel;
 using Surface_mesh = CGAL::Surface_mesh<K::Point_3>;
-using edge_descriptor = Surface_mesh::Edge_index;
-using face_descriptor = Surface_mesh::Face_index;
-using halfedge_descriptor = Surface_mesh::Halfedge_index;
-using vertex_descriptor = Surface_mesh::Vertex_index;
 
 #ifdef CGAL_CONCURRENT_MESH_3
 typedef CGAL::Parallel_tag Concurrency_tag;
@@ -34,33 +33,32 @@ typedef CGAL::Parallel_tag Concurrency_tag;
 typedef CGAL::Sequential_tag Concurrency_tag;
 #endif
 
-typedef CGAL::Polyhedron_3<K> Polyhedron;
-typedef CGAL::Polyhedral_mesh_domain_3<Polyhedron, K> Mesh_domain;
+// typedef CGAL::Polyhedron_3<K> Polyhedron;
+// specialized version of Polyhedron from Mesh_3
+typedef CGAL::Mesh_polyhedron_3<K>::type Polyhedron;
 
+// simple...
+typedef CGAL::Polyhedral_mesh_domain_3<Polyhedron, K> Mesh_domain;
+// typedef CGAL::Polyhedral_mesh_domain_with_features_3<K> Mesh_domain;
 // Triangulation
 typedef CGAL::Mesh_triangulation_3<Mesh_domain, CGAL::Default, Concurrency_tag>::type Tr;
 typedef CGAL::Mesh_complex_3_in_triangulation_3<Tr> C3t3;
 // Criteria
 typedef CGAL::Mesh_criteria_3<Tr> Mesh_criteria;
 
-// typedef CGAL::Polyhedral_mesh_domain_with_features_3<K> Mesh_domain;
-// Triangulation
-// typedef CGAL::Mesh_triangulation_3<Mesh_domain, CGAL::Default, CGAL::Sequential_tag>::type Tr;
-// typedef CGAL::Mesh_complex_3_in_triangulation_3<
-//     Tr, Mesh_domain::Corner_index, Mesh_domain::Curve_index>
-//     C3t3;
+// complex
+typedef CGAL::Polyhedral_complex_mesh_domain_3<K> complex_Mesh_domain;
+typedef CGAL::Mesh_triangulation_3<complex_Mesh_domain, CGAL::Default, Concurrency_tag>::type complex_Tr;
+typedef CGAL::Mesh_complex_3_in_triangulation_3<complex_Tr, complex_Mesh_domain::Corner_index, complex_Mesh_domain::Curve_index> complex_C3t3;
+typedef CGAL::Mesh_criteria_3<complex_Tr> complex_Mesh_criteria;
 
-// // Criteria
-// typedef CGAL::Mesh_criteria_3<Tr> Mesh_criteria;
-
-typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
-typedef CGAL::Polyhedron_3<K> Polyhedron;
-
-struct V2FII
+struct V2FIIII
 {
-    std::vector<std::vector<float>> v0;
-    std::vector<std::vector<int>> v1;
-    std::vector<std::vector<int>> v2;
+    std::vector<std::vector<float>> vertices;
+    std::vector<std::vector<int>> faces;
+    std::vector<std::vector<int>> cells;
+    std::vector<int> faces_pmap;
+    std::vector<int> cells_pmap;
 };
 
 template <class HDS>
@@ -107,8 +105,6 @@ Polyhedron build_polyhedron(
     Polyhedron poly;
     Build_from_vectors<Polyhedron::HalfedgeDS> builder(vertices, faces);
     poly.delegate(builder);
-    if (poly.is_valid())
-        std::cout << "Polyhedron built successfully.\n";
     return poly;
 }
 
@@ -146,18 +142,172 @@ Polyhedron build_polyhedron(
 //     return vertices;
 // }
 
-// template <typename T0, typename T1, typename T2>
-// struct Three2DVectors
-// {
-//     CGAL_t::vecvec<T0> v0;
-//     CGAL_t::vecvec<T1> v1;
-//     CGAL_t::vecvec<T2> v2;
-// };
-
-V2FII get_vertices_and_tetrahedra(C3t3 c3t3)
+// Get vertices
+template <typename T_Tr>
+std::pair<CGAL_t::vecvec<float>, std::unordered_map<typename T_Tr::Vertex_handle, int>> tr_get_vertices(T_Tr tr)
 {
-    int i, j; // counters
+    int i;
 
+    std::unordered_map<typename T_Tr::Vertex_handle, int> vertex_to_index;
+    CGAL_t::vecvec<float> vertices(tr.number_of_vertices(), std::vector<float>(3));
+    i = 0;
+    for (auto v : tr.finite_vertex_handles())
+    {
+        vertex_to_index[v] = i;
+        auto p = tr.point(v);
+        vertices[i][0] = (float)p.x();
+        vertices[i][1] = (float)p.y();
+        vertices[i][2] = (float)p.z();
+        ++i;
+    }
+    return std::make_pair(vertices, vertex_to_index);
+}
+
+// Get facets (triangles)
+std::pair<CGAL_t::vecvec<int>, std::vector<int>> c3t3_get_facets(
+    C3t3 c3t3,
+    std::unordered_map<Tr::Vertex_handle, int> vertex_to_index)
+{
+    int i, j;
+
+    auto tr = c3t3.triangulation();
+
+    bool print_each_facet_twice = false;
+
+    int n_facets = c3t3.number_of_facets_in_complex();
+    if (print_each_facet_twice)
+        n_facets += n_facets;
+    CGAL_t::vecvec<int> facets(n_facets, std::vector<int>(3));
+    std::vector<int> facets_id(n_facets);
+    i = 0;
+    for (auto f : tr.finite_facets())
+    {
+        if (c3t3.is_in_complex(f))
+        {
+
+            auto [c, index] = f; // handle,
+            auto sp_index = c3t3.surface_patch_index(f);
+            facets_id[i] = sp_index.second; // e.g., 0 and 1
+            // std::cout << x.first << " " << x.second << std::endl;
+            // int c_domain = c3t3.subdomain_index(c);
+
+            // Apply priority among subdomains, to get consistent facet orientation per subdomain-pair interface.
+            if (print_each_facet_twice)
+            {
+                auto mirror_facet = tr.mirror_facet(f);
+                [[maybe_unused]] auto [c2, _] = mirror_facet;
+                // NOTE: We mirror a facet when needed to make it consistent with Use_cell_indices_pmap.
+                // if (get(cell_pmap, c) > get(cell_pmap, c2))
+                // {
+                //     f = mirror_facet;
+                // }
+            }
+
+            // Get facet vertices in CCW order.
+            j = 0;
+            for (auto v : tr.vertices(f))
+                facets[i][j++] = vertex_to_index[v];
+
+            // Print triangle again if needed, with opposite orientation
+            if (print_each_facet_twice)
+            {
+                i = 2;
+                for (auto v : tr.vertices(f))
+                    facets[i][j--] = vertex_to_index[v];
+                // os << get(facet_twice_pmap, f) << '\n';
+            }
+            ++i;
+        }
+    }
+    return std::make_pair(facets, facets_id);
+}
+
+std::pair<CGAL_t::vecvec<int>, std::vector<int>> c3t3_get_facets(
+    complex_C3t3 c3t3,
+    std::unordered_map<complex_Tr::Vertex_handle, int> vertex_to_index)
+{
+    int i, j;
+
+    auto tr = c3t3.triangulation();
+
+    bool print_each_facet_twice = false;
+
+    int n_facets = c3t3.number_of_facets_in_complex();
+    if (print_each_facet_twice)
+        n_facets += n_facets;
+    CGAL_t::vecvec<int> facets(n_facets, std::vector<int>(3));
+    std::vector<int> facets_id(n_facets);
+    i = 0;
+    for (auto f : tr.finite_facets())
+    {
+        if (c3t3.is_in_complex(f))
+        {
+            auto [c, index] = f; // handle,
+            facets_id[i] = c3t3.surface_patch_index(f);
+
+            // Apply priority among subdomains, to get consistent facet orientation per subdomain-pair interface.
+            if (print_each_facet_twice)
+            {
+                auto mirror_facet = tr.mirror_facet(f);
+                [[maybe_unused]] auto [c2, _] = mirror_facet;
+                // NOTE: We mirror a facet when needed to make it consistent with Use_cell_indices_pmap.
+                // if (get(cell_pmap, c) > get(cell_pmap, c2))
+                // {
+                //     f = mirror_facet;
+                // }
+            }
+
+            // Get facet vertices in CCW order.
+            j = 0;
+            for (auto v : tr.vertices(f))
+                facets[i][j++] = vertex_to_index[v];
+
+            // add triangle again if needed, with opposite orientation
+            if (print_each_facet_twice)
+            {
+                i = 2;
+                for (auto v : tr.vertices(f))
+                    facets[i][j--] = vertex_to_index[v];
+            }
+            ++i;
+        }
+    }
+    return std::make_pair(facets, facets_id);
+}
+
+template <typename T_C3T3, typename T_Tr>
+std::pair<CGAL_t::vecvec<int>, std::vector<int>> c3t3_get_cells(
+    T_C3T3 c3t3,
+    std::unordered_map<typename T_Tr::Vertex_handle, int> vertex_to_index)
+{
+    // Get cells (tetrahedra)
+
+    int i, j;
+    // tr.number_of_cells()                 domain cells, infinite cells, facets
+    // tr.number_of_finite_cells()          domain cells, infinite cells
+    // c3t3.number_of_cells_in_complex()    domain cells
+    auto tr = c3t3.triangulation();
+    int n_cells = c3t3.number_of_cells_in_complex();
+    CGAL_t::vecvec<int> cells(n_cells, std::vector<int>(4));
+    std::vector<int> cells_id(n_cells);
+    i = 0;
+    for (auto c : tr.finite_cell_handles()) // iterator over cell *handles*
+    {
+        if (c3t3.is_in_complex(c)) // only save cells in the domain
+        {
+            cells_id[i] = c3t3.subdomain_index(c);
+            j = 0;
+            for (auto v : tr.vertices(c))
+                cells[i][j++] = vertex_to_index[v];
+            ++i;
+        }
+    }
+    return std::make_pair(cells, cells_id);
+}
+
+template <typename T_C3T3, typename T_Tr>
+V2FIIII c3t3_get_all(T_C3T3 c3t3)
+{
     auto tr = c3t3.triangulation();
 
     // bool renumber_subdomain_indices = false;
@@ -179,129 +329,165 @@ V2FII get_vertices_and_tetrahedra(C3t3 c3t3)
 
     // VERTICES
     // ========
-    i = 0;
-    std::unordered_map<Tr::Vertex_handle, int> vertex_to_index;
-    CGAL_t::vecvec<float> vertices(tr.number_of_vertices(), std::vector<float>(3));
-    for (auto v : tr.finite_vertex_handles())
-    {
-        vertex_to_index[v] = i;
-        auto p = tr.point(v);
-        vertices[i][0] = (float)p.x();
-        vertices[i][1] = (float)p.y();
-        vertices[i][2] = (float)p.z();
-        ++i;
-    }
+    auto vp = tr_get_vertices<T_Tr>(tr);
+    auto vertices = vp.first;
+    auto vertex_to_index = vp.second;
 
-    // TRIANGLES
-    // =========
-    bool print_each_facet_twice = false;
+    auto fp = c3t3_get_facets(c3t3, vertex_to_index);
+    auto facets = fp.first;
+    auto facets_id = fp.second;
 
-    int number_of_triangles = c3t3.number_of_facets_in_complex();
-    if (print_each_facet_twice)
-        number_of_triangles += number_of_triangles;
-    CGAL_t::vecvec<int> triangles(number_of_triangles, std::vector<int>(3));
-    i = 0; // reset
-    for (auto f : tr.finite_facets())
-    {
-        if (c3t3.is_in_complex(f))
-        {
+    auto cp = c3t3_get_cells<T_C3T3, T_Tr>(c3t3, vertex_to_index);
+    auto cells = cp.first;
+    auto cells_id = cp.second;
 
-            auto [c, index] = f; // handle,
-            // Apply priority among subdomains, to get consistent facet orientation per subdomain-pair interface.
-            if (print_each_facet_twice)
-            {
-                auto mirror_facet = tr.mirror_facet(f);
-                [[maybe_unused]] auto [c2, _] = mirror_facet;
-                // NOTE: We mirror a facet when needed to make it consistent with Use_cell_indices_pmap.
-                // if (get(cell_pmap, c) > get(cell_pmap, c2))
-                // {
-                //     f = mirror_facet;
-                // }
-            }
-
-            // Get facet vertices in CCW order.
-            j = 0;
-            for (auto v : tr.vertices(f))
-            {
-                triangles[i][j++] = vertex_to_index[v];
-            }
-            // os << get(facet_pmap, f) << '\n';
-
-            // Print triangle again if needed, with opposite orientation
-            if (print_each_facet_twice)
-            {
-                i = 2;
-                for (auto v : tr.vertices(f))
-                {
-                    triangles[i][j--] = vertex_to_index[v];
-                }
-                // os << get(facet_twice_pmap, f) << '\n';
-            }
-            ++i;
-        }
-    }
-
-    // TETRAHEDRA
-    // ==========
-    // tr.number_of_cells()                 domain cells, infinite cells, facets
-    // tr.number_of_finite_cells()          domain cells, infinite cells
-    // c3t3.number_of_cells_in_complex()    domain cells
-    CGAL_t::vecvec<int> tetrahedra(c3t3.number_of_cells_in_complex(), std::vector<int>(4));
-    std::vector<int> subdomain_index(c3t3.number_of_cells_in_complex());
-    i = 0;                                  // reset
-    for (auto c : tr.finite_cell_handles()) // iterator over cell *handles*
-    {
-        if (c3t3.is_in_complex(c)) // only save cells in the domain
-        {
-            subdomain_index[i] = c.subdomain_index();
-            j = 0;
-            for (auto v : tr.vertices(c))
-            {
-                tetrahedra[i][j++] = vertex_to_index[v];
-            }
-            ++i;
-        }
-    }
-    V2FII r = {vertices, triangles, tetrahedra};
-    return r;
+    return {vertices, facets, cells, facets_id, cells_id};
 }
 
-V2FII mesh3_make_mesh(
+V2FIIII mesh3_make_mesh(
     CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces)
+    CGAL_t::vecvec<int> faces,
+    float edge_size,
+    float cell_radius_edge_ratio,
+    float cell_size,
+    float facet_angle,
+    float facet_distance,
+    float facet_size)
 {
-    // make domain
-    // Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+    // Domain
     Polyhedron mesh = build_polyhedron(vertices, faces);
     Mesh_domain domain(mesh);
+    // domain.detect_features(); // get sharp features
 
-    // get sharp features
-    // domain.detect_features();
-
-    // set meshing criteria
+    // Meshing criteria
     Mesh_criteria criteria(
-        CGAL::parameters::edge_size(0.025).facet_angle(25).facet_size(0.05).facet_distance(0.005).cell_radius_edge_ratio(3).cell_size(0.05));
+        CGAL::parameters::edge_size(edge_size)
+            .facet_angle(facet_angle)
+            .facet_size(facet_size)
+            .facet_distance(facet_distance)
+            .cell_radius_edge_ratio(cell_radius_edge_ratio)
+            .cell_size(cell_size));
 
     // Mesh generation
+    std::cout << "CGAL :: Mesh_3 :: Generating mesh..." << std::endl;
     C3t3 c3t3 = CGAL::make_mesh_3<C3t3>(
         domain, criteria, CGAL::parameters::no_perturb().no_exude());
+
+    std::cout << "CGAL :: Mesh_3 :: Refining mesh..." << std::endl;
+    CGAL::refine_mesh_3(c3t3, domain, criteria);
 
     c3t3.remove_isolated_vertices();
     CGAL::remove_far_points_in_mesh_3(c3t3);
 
     // Output
-    std::ofstream medit_file("/home/jesperdn/repositories/simnibs-cortech/out_1.mesh");
-    CGAL::IO::write_MEDIT(medit_file, c3t3);
-    medit_file.close();
+    // std::ofstream medit_file("/home/jesperdn/repositories/simnibs-cortech/out_1.mesh");
+    // CGAL::IO::write_MEDIT(medit_file, c3t3);
+    // medit_file.close();
+
+    // Surface_mesh sm;
+    // // CGAL::facets_in_complex_3_to_triangle_mesh(c3t3, sm);
 
     // Extract surface mesh from tetrahedral mesh boundary
-    // Surface_mesh boundary_mesh;
+    return c3t3_get_all<C3t3, Tr>(c3t3);
+}
 
-    auto r = get_vertices_and_tetrahedra(c3t3);
+V2FIIII mesh3_make_mesh_bounding(
+    CGAL_t::vecvec<float> v_inside,
+    CGAL_t::vecvec<int> f_inside,
+    CGAL_t::vecvec<float> v_bounding,
+    CGAL_t::vecvec<int> f_bounding,
+    float edge_size,
+    float cell_radius_edge_ratio,
+    float cell_size,
+    float facet_angle,
+    float facet_distance,
+    float facet_size)
+{
+    // Domain
+    Polyhedron mesh_inside = build_polyhedron(v_inside, f_inside);
+    Polyhedron mesh_bounding = build_polyhedron(v_bounding, f_bounding);
+    Mesh_domain domain(mesh_inside, mesh_bounding);
+    // domain.detect_features(); // get sharp features
 
-    // std::cout << std::get<1>(t)[0][0] << " " << std::get<1>(t)[0][1] << " " << std::get<1>(t)[0][2] << std::endl;
-    // std::cout << std::get<1>(t)[1][0] << " " << std::get<1>(t)[1][1] << " " << std::get<1>(t)[1][2] << std::endl;
-    // std::cout << std::get<1>(t)[2][0] << " " << std::get<1>(t)[2][1] << " " << std::get<1>(t)[2][2] << std::endl;
-    return r;
-    // return std::make_pair(std::get<0>(t), std::get<2>(t));
+    // Meshing criteria
+    Mesh_criteria criteria(
+        CGAL::parameters::edge_size(edge_size)
+            .facet_angle(facet_angle)
+            .facet_size(facet_size)
+            .facet_distance(facet_distance)
+            .cell_radius_edge_ratio(cell_radius_edge_ratio)
+            .cell_size(cell_size));
+
+    // Mesh generation
+    std::cout << "CGAL :: Mesh_3 :: Generating mesh..." << std::endl;
+    C3t3 c3t3 = CGAL::make_mesh_3<C3t3>(
+        domain, criteria, CGAL::parameters::no_perturb().no_exude());
+
+    std::cout << "CGAL :: Mesh_3 :: Refining mesh..." << std::endl;
+    CGAL::refine_mesh_3(c3t3, domain, criteria);
+
+    c3t3.remove_isolated_vertices();
+    CGAL::remove_far_points_in_mesh_3(c3t3);
+
+    // Surface_mesh sm;
+    // // CGAL::facets_in_complex_3_to_triangle_mesh(c3t3, sm);
+
+    // Extract surface mesh from tetrahedral mesh boundary
+    return c3t3_get_all<C3t3, Tr>(c3t3);
+}
+
+V2FIIII mesh3_make_mesh_complex(
+    std::vector<CGAL_t::vecvec<float>> vertices,
+    std::vector<CGAL_t::vecvec<int>> faces,
+    std::vector<std::pair<int, int>> incident_subdomains,
+    float edge_size,
+    float cell_radius_edge_ratio,
+    float cell_size,
+    float facet_angle,
+    float facet_distance,
+    float facet_size)
+{
+    // Domain
+    int n_patches = faces.size();
+    assert(n_patches == vertices.size());
+    assert(n_patches == incident_subdomains.size());
+
+    std::vector<Polyhedron> patches(n_patches);
+    for (int i = 0; i < n_patches; ++i)
+    {
+        patches[i] = build_polyhedron(vertices[i], faces[i]);
+        if (patches[i].is_valid())
+            std::cout << "Polyhedron " << i << " : " << "OK" << std::endl;
+    }
+    complex_Mesh_domain domain(
+        patches.begin(),
+        patches.end(),
+        incident_subdomains.begin(),
+        incident_subdomains.end());
+    domain.detect_features(); // get borders and sharp features
+
+    // Meshing criteria
+    complex_Mesh_criteria criteria(
+        CGAL::parameters::edge_size(edge_size)
+            .facet_angle(facet_angle)
+            .facet_size(facet_size)
+            .facet_distance(facet_distance)
+            .cell_radius_edge_ratio(cell_radius_edge_ratio)
+            .cell_size(cell_size));
+
+    // Mesh generation
+    std::cout << "CGAL :: Mesh_3 :: Generating mesh..." << std::endl;
+    complex_C3t3 c3t3 = CGAL::make_mesh_3<complex_C3t3>(
+        domain, criteria, CGAL::parameters::no_perturb().no_exude());
+
+    std::cout << "CGAL :: Mesh_3 :: Refining mesh..." << std::endl;
+    CGAL::refine_mesh_3(c3t3, domain, criteria);
+
+    c3t3.remove_isolated_vertices();
+    CGAL::remove_far_points_in_mesh_3(c3t3);
+
+    // Surface_mesh sm;
+    // // CGAL::facets_in_complex_3_to_triangle_mesh(c3t3, sm);
+
+    return c3t3_get_all<complex_C3t3, complex_Tr>(c3t3);
 }
