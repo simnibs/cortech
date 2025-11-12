@@ -124,8 +124,7 @@ class Surface:
         self.n_vertices, self.n_dim = value.shape
 
     def reverse_face_orientation(self):
-        order = (0, 2, 1)
-        self.faces = self.faces[:, order]
+        self.faces = self.faces[:, ::-1]
         # Ensure subdivide_faces is still valid
         # self.faces_to_edges = self.faces_to_edges[:, order]
 
