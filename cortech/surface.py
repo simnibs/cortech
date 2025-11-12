@@ -123,6 +123,12 @@ class Surface:
         self._vertices = value
         self.n_vertices, self.n_dim = value.shape
 
+    def reverse_face_orientation(self):
+        order = (0, 2, 1)
+        self.faces = self.faces[:, order]
+        # Ensure subdivide_faces is still valid
+        # self.faces_to_edges = self.faces_to_edges[:, order]
+
     def as_mesh(self):
         return self.vertices[self.faces]
 
@@ -882,6 +888,21 @@ class Surface:
             self.vertices, self.faces, points, on_boundary_is_inside
         )
 
+    def fair(self, indices, inplace: bool = False):
+        """
+
+        Parameters
+        ----------
+        indices :
+            Indices of the vertices to fair.
+
+        """
+        v = pmp.fair(self.vertices, self.faces, indices)
+        if inplace:
+            self.vertices = v
+        else:
+            return self.new_from(v, self.faces)
+
     def smooth_angle_and_area(
         self,
         constrained_vertices: npt.ArrayLike | None = None,
@@ -1047,7 +1068,7 @@ class Surface:
         ----------
         https://doc.cgal.org/latest/Polygon_mesh_processing/index.html
         """
-        v = pmp.smooth_shape_by_curvature(
+        v = pmp.smooth_shape_by_curvature_threshold(
             self.vertices,
             self.faces,
             time,
@@ -1403,6 +1424,15 @@ class Surface:
 
         return tris, weights, projs, dists
 
+    def find_border_edges(self):
+        return pmp.find_border_edges(self.vertices, self.faces)
+
+    def extract_boundary_cycles(self):
+        return pmp.extract_boundary_cycles(self.vertices, self.faces)
+
+    # def snap_borders(self):
+    #     return pmp.snap_borders(self.vertices, self.faces)
+
     def remove_faces(self, faces: npt.ArrayLike):
         """Remove the specified faces. The surface will be pruned afterwards,
         removing any unused vertices.
@@ -1414,6 +1444,27 @@ class Surface:
         """
         self.faces = np.delete(self.faces, faces, axis=0)
         self.prune()
+
+    def remove_vertices(self, vertices: npt.NDArray):
+        """Remove the specified vertices along with any faces that references
+        these vertices.
+
+        Paramters
+        ---------
+        vertices :
+            Array of indices or boolean mask indicating the vertices to remove.
+
+        Returns
+        -------
+
+        """
+        if vertices.dtype == bool:
+            assert len(vertices) == self.n_vertices
+            invalid_vertices = vertices[self.faces]
+        else:
+            invalid_vertices = np.isin(self.faces, vertices)
+        faces_to_remove = invalid_vertices.any(1)
+        self.remove_faces(faces_to_remove)
 
     def prune(self):
         """Remove unused vertices and reindex faces."""
@@ -1823,3 +1874,53 @@ class Sphere(Surface):
     ):
         self.project(target, *args, **kwargs)
         return self.resample(values)
+
+
+def shrink_surface(
+    s: Surface,
+    smooth_kwargs: list[dict] | None = None,
+    remesh_kwargs: dict | None = None,
+    decoupling_amount: float = 0.1,
+    do_remesh: bool = True,
+    do_decouple: bool = True,
+):
+    if smooth_kwargs is None:
+        smooth_kwargs = [
+            dict(time=1.0, n_iter=10, curv_threshold=0.2, ball_radius=0.5),
+            dict(time=1.0, n_iter=10, curv_threshold=0.1, ball_radius=0.5),
+            dict(time=1.0, n_iter=10, curv_threshold=0.05, ball_radius=0.5),
+            dict(time=1.0, n_iter=5, curv_threshold=0.025, ball_radius=0.5),
+            dict(time=1.0, n_iter=5, curv_threshold=0.0, ball_radius=0.5),
+        ]
+
+    if remesh_kwargs is None:
+        remesh_kwargs = dict(target_edge_length=0.75, n_iter=5)
+
+    for i, kw in enumerate(smooth_kwargs, 1):
+        print(f"Iteration :: {i} of {len(smooth_kwargs)}")
+
+        print(">> Smoothing")
+        s.smooth_shape_by_curvature_threshold(**kw, inplace=True)
+        if do_remesh:
+            print(">> Remeshing")
+            s.isotropic_remeshing(**remesh_kwargs, inplace=True)
+
+        if do_decouple:
+            if i < len(smooth_kwargs):
+                curv = s.compute_interpolated_corrected_curvatures()
+                n = s.compute_vertex_normals()
+                mask = curv.H <= 0.0
+                s.vertices[mask] = s.vertices[mask] - decoupling_amount * n[mask]
+
+    return s
+
+
+# def inflate_surface(s: Surface, smooth_kwargs: list[dict] | None):
+# inflate
+# smooth_kwargs = [
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.2, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.1, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.05, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.025, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=0.0, ball_radius=0.5, apply_above_curv_threshold=False),
+# ]

@@ -21,6 +21,10 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
     )
+    # pair[vector[vector[float]], vector[vector[int]]] pmp_snap_borders(
+    #     vector[vector[float]] vertices,
+    #     vector[vector[int]] faces,
+    # )
     vector[cppbool] pmp_points_inside_surface(
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
@@ -154,6 +158,15 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
     # )
 
 
+# def snap_borders(vertices: npt.NDArray, faces: npt.NDArray):
+#     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+#     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+#     cdef pair[vector[vector[float]], vector[vector[int]]] out
+
+#     out = pmp_snap_borders(cpp_v, cpp_f)
+#     v = np.array(out.first, dtype=float)
+#     f = np.array(out.second, dtype=int)
+#     return v, f
 
 def find_border_edges(vertices: npt.NDArray, faces: npt.NDArray) -> npt.NDArray:
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -202,10 +215,7 @@ def points_inside_surface(
 
     return np.array(out, dtype=bool)
 
-def hole_fill_refine_fair(
-        vertices: npt.NDArray,
-        faces: npt.NDArray,
-    ) -> tuple[npt.NDArray, npt.NDArray]:
+def hole_fill_refine_fair(vertices: npt.NDArray, faces: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
     """Compute the intersecting pairs of triangles in a surface mesh.
 
     Parameters
@@ -460,7 +470,7 @@ def connected_components(
 def smooth_shape(
         vertices: npt.ArrayLike,
         faces: npt.ArrayLike,
-        constrained_vertices: Union[npt.ArrayLike, None] = None,
+        constrained_vertices: npt.ArrayLike | None = None,
         time: float = 0.1,
         n_iter: int = 1
     ) -> npt.NDArray:
@@ -570,7 +580,7 @@ def interpolated_corrected_curvatures(vertices: npt.ArrayLike, faces: npt.ArrayL
 def tangential_relaxation(
         vertices: npt.ArrayLike,
         faces: npt.ArrayLike,
-        constrained_vertices: Union[npt.ArrayLike, None] = None,
+        constrained_vertices: npt.ArrayLike | None = None,
         n_iter: int = 1,
     ) -> npt.NDArray:
     """Tangential relaxation of vertices.
@@ -587,9 +597,11 @@ def tangential_relaxation(
     https://doc.cgal.org/latest/Polygon_mesh_processing/
     https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#ga57fa999abe8dc557003482444df2a189
     """
+    constrained_vertices = [] if constrained_vertices is None else constrained_vertices
+
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices or [], dtype=np.int32)
+    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices, dtype=np.int32)
     cdef vector[vector[float]] v
 
     v = pmp_tangential_relaxation(cpp_v, cpp_f, cpp_constrained_vertices, n_iter)
@@ -613,7 +625,7 @@ def smooth_angle_and_area(
     ----------
     vertices: npt.ArrayLike
     faces: npt.ArrayLike
-    constrained_vertices : Union[npt.ArrayLike, None]
+    constrained_vertices : npt.ArrayLike | None
     niter: int
     use_angle_smoothing: bool = True
     use_area_smoothing: bool = True
@@ -626,9 +638,11 @@ def smooth_angle_and_area(
 
 
     """
+    constrained_vertices = [] if constrained_vertices is None else constrained_vertices
+
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices or [], dtype=np.int32)
+    cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices, dtype=np.int32)
     cdef vector[vector[float]] v
 
     v = pmp_smooth_angle_and_area(
@@ -661,6 +675,8 @@ def isotropic_remeshing(
         faces: npt.ArrayLike,
         target_edge_length: float,
         n_iter: int = 1,
+        remesh_faces: npt.ArrayLike | None = None,
+        protect_constraints: bool = False,
     ):
     """Isotropic surface remeshing. Remeshing is achieved by a combination of
     edge splits/flips/collapses, tangential relaxation, and projection back
@@ -689,18 +705,73 @@ def isotropic_remeshing(
     https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
 
     """
+    remesh_faces = [] if remesh_faces is None else remesh_faces
+
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_remesh_faces = np.ascontiguousarray(remesh_faces, dtype=np.int32)
     cdef pair[vector[vector[float]], vector[vector[int]]] out
 
     out = pmp_isotropic_remeshing(
-        cpp_v, cpp_f, target_edge_length, n_iter
+        cpp_v, cpp_f, target_edge_length, n_iter, cpp_remesh_faces, protect_constraints
     )
     v = np.array(out.first, dtype=float)
     f = np.array(out.second, dtype=int)
 
     return v, f
 
+
+def isotropic_remeshing_with_id(
+        vertices: npt.ArrayLike,
+        faces: npt.ArrayLike,
+        target_edge_length: float,
+        n_iter: int = 1,
+        remesh_faces: npt.ArrayLike | None = None,
+        protect_constraints: bool = False,
+    ):
+    """Isotropic surface remeshing. Remeshing is achieved by a combination of
+    edge splits/flips/collapses, tangential relaxation, and projection back
+    onto the original surface.
+
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+    target_edge_length: float
+        The target edge length for the isotropic remesher. This defines the
+        resolution of the resulting surface.
+    n_iter: int
+        Number of iterations of the above-mentioned atomic operations.
+
+    Returns
+    -------
+    v : npt.NDArray
+        The new vertices.
+    f : npt.NDArray
+        The new faces.
+
+    References
+    ----------
+
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
+
+    """
+    remesh_faces = [] if remesh_faces is None else remesh_faces
+
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_remesh_faces = np.ascontiguousarray(remesh_faces, dtype=np.int32)
+    cdef MeshWithPMaps out
+
+    out = pmp_isotropic_remeshing_with_id(
+        cpp_v, cpp_f, target_edge_length, n_iter, cpp_remesh_faces, protect_constraints
+    )
+    v = np.array(out.vertices, dtype=float)
+    f = np.array(out.faces, dtype=int)
+    v_pmap = np.array(out.vertices_pmap, dtype=int)
+    f_pmap = np.array(out.faces_pmap, dtype=int)
+
+    return v, f, v_pmap, f_pmap
 
 # def corefine_and_union(vertices1, faces1, vertices2, faces2):
 #     cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)

@@ -1,4 +1,4 @@
-// #include <iostream>
+#include <iostream>
 #include <vector>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
@@ -8,7 +8,7 @@
 #include <CGAL/Polygon_mesh_processing/clip.h>
 #include <CGAL/Polygon_mesh_processing/connected_components.h>
 // #include <CGAL/Polygon_mesh_processing/corefinement.h>
-// #include <CGAL/Polygon_mesh_processing/fair.h>
+#include <CGAL/Polygon_mesh_processing/fair.h>
 #include <CGAL/Polygon_mesh_processing/intersection.h>
 #include <CGAL/Polygon_mesh_processing/remesh.h>
 #include <CGAL/Polygon_mesh_processing/repair_self_intersections.h>
@@ -21,6 +21,7 @@
 #include <CGAL/Polygon_mesh_processing/triangulate_hole.h>
 #include <CGAL/Polygon_mesh_processing/border.h>
 
+// #include <CGAL/Polygon_mesh_processing/internal/Snapping/snap.h>
 // #include <CGAL/Polygon_mesh_processing/repair_polygon_soup.h>
 #include <CGAL/Side_of_triangle_mesh.h>
 
@@ -106,6 +107,15 @@ struct MeshWithPMaps
 //     return std::make_pair(outpoints, outpolygons);
 // }
 
+// std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_snap_borders(
+//     CGAL_t::vecvec<float> vertices,
+//     CGAL_t::vecvec<int> faces)
+// {
+//     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+//     PMP::experimental::snap_borders(mesh);
+//     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
+//     return pair;
+// }
 
 CGAL_t::vecvec<int> pmp_extract_boundary_cycles(
     CGAL_t::vecvec<float> vertices,
