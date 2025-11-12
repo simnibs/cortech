@@ -828,16 +828,53 @@ class Surface:
                 return intersect_pairs[0], intersect_pairs[1]
 
     def isotropic_remeshing(
-        self, target_edge_length: float, n_iter: int = 1, inplace: bool = False
+        self,
+        target_edge_length: float,
+        n_iter: int = 1,
+        remesh_faces: npt.ArrayLike | None = None,
+        protect_constraints: bool = False,
+        inplace: bool = False,
     ):
         v, f = pmp.isotropic_remeshing(
-            self.vertices, self.faces, target_edge_length, n_iter
+            self.vertices,
+            self.faces,
+            target_edge_length,
+            n_iter,
+            remesh_faces,
+            protect_constraints,
         )
         if inplace:
             self.vertices = v
             self.faces = f
         else:
             return self.new_from(v, f)
+
+    def isotropic_remeshing_with_id(
+        self,
+        target_edge_length: float,
+        n_iter: int = 1,
+        remesh_faces: npt.ArrayLike | None = None,
+        protect_constraints: bool = False,
+        inplace: bool = False,
+    ):
+        """
+        In the property maps, -1 marks a new vertex/face.
+
+        """
+        v, f, v_pmap, f_pmap = pmp.isotropic_remeshing_with_id(
+            self.vertices,
+            self.faces,
+            target_edge_length,
+            n_iter,
+            remesh_faces,
+            protect_constraints,
+        )
+        if inplace:
+            self.vertices = v
+            self.faces = f
+            return v_pmap, f_pmap
+        else:
+            return self.new_from(v, f), v_pmap, f_pmap
 
     def points_inside_surface(self, points, on_boundary_is_inside: bool = True):
         """For each point in `points`, test it is inside the surface or not."""

@@ -28,11 +28,20 @@
 
 using K = CGAL::Exact_predicates_inexact_constructions_kernel;
 using Surface_mesh = CGAL::Surface_mesh<K::Point_3>;
+using edge_descriptor = Surface_mesh::Edge_index;
+using face_descriptor = Surface_mesh::Face_index;
+using halfedge_descriptor = Surface_mesh::Halfedge_index;
 using vertex_descriptor = Surface_mesh::Vertex_index;
-using face_descriptor = boost::graph_traits<Surface_mesh>::face_descriptor;
-using halfedge_descriptor = boost::graph_traits<Surface_mesh>::halfedge_descriptor;
 
 namespace PMP = CGAL::Polygon_mesh_processing;
+
+struct MeshWithPMaps
+{
+    std::vector<std::vector<float>> vertices;
+    std::vector<std::vector<int>> faces;
+    std::vector<int> vertices_pmap;
+    std::vector<int> faces_pmap;
+};
 
 // struct Array_traits
 // {
@@ -96,6 +105,78 @@ namespace PMP = CGAL::Polygon_mesh_processing;
 
 //     return std::make_pair(outpoints, outpolygons);
 // }
+
+
+CGAL_t::vecvec<int> pmp_extract_boundary_cycles(
+    CGAL_t::vecvec<float> vertices,
+    CGAL_t::vecvec<int> faces)
+{
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+
+    std::vector<halfedge_descriptor> boundary_cycles;
+
+    PMP::extract_boundary_cycles(mesh, std::back_inserter(boundary_cycles));
+
+    // cycle is a vector of halfedges forming one boundary loop
+    CGAL_t::vecvec<int> boundary_cycles_indices;
+    // for (auto cycle : boundary_cycles)
+    // {
+    //     // std::vector<int> boundary_cycles_index(cycle.size());
+    //     // for (halfedge_descriptor h : cycle)
+    //     // {
+    //     //     //     vertex_descriptor v0 = mesh.source(h);
+    //     //     //     boundary_cycles_index.push_back((int)v0);
+    //     // }
+    //     // boundary_cycles_indices.push_back(boundary_cycles_index);
+    // }
+    return boundary_cycles_indices;
+}
+
+// CGAL_t::vecvec<int> faces(n_faces, std::vector<int>(3));
+
+// // for each face index, iterate over its halfedges and return all `target` vertices
+// int i = 0;
+// for (Surface_mesh::Face_index fi : mesh.faces())
+// {
+//     int j = 0;
+//     Surface_mesh::Halfedge_index h = mesh.halfedge(fi);
+//     for (Surface_mesh::Halfedge_index hi : mesh.halfedges_around_face(h))
+//     {
+//         vertex_descriptor vi = mesh.target(hi);
+//         faces[i][j] = (int)vi;
+//         j++;
+//     }
+//     j = 0;
+//     i++;
+// }
+// return faces;
+
+CGAL_t::vecvec<int> pmp_find_border_edges(
+    CGAL_t::vecvec<float> vertices,
+    CGAL_t::vecvec<int> faces)
+{
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+    // we don't know how many edges are border edges but preallocate too much
+    // memory and resize later
+    int n_edges = mesh.number_of_edges();
+    CGAL_t::vecvec<int> edges(n_edges, std::vector<int>(2));
+    int i = 0;
+    for (edge_descriptor e : mesh.edges())
+    {
+        if (mesh.is_border(e))
+        {
+            for (int j = 0; j < 2; j++)
+            {
+                vertex_descriptor v = mesh.vertex(e, j);
+                edges[i][j] = (int)v;
+            }
+            i++;
+        }
+    }
+    edges.resize(i);
+    // edges.shrink_to_fit();
+    return edges;
+}
 
 std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_hole_fill_refine_fair(
     CGAL_t::vecvec<float> vertices,
@@ -614,7 +695,7 @@ CGAL_t::vecvec<float> pmp_fair(
     }
     CGAL::Boolean_property_map<std::set<vertex_descriptor>> vcmap(vertex_indices);
 
-    auto success = PMP::fair(mesh, vertex_indices);
+    PMP::fair(mesh, vertex_indices);
     auto vertices_faired = CGAL_sm::extract_vertices(mesh);
 
     return vertices_faired;
@@ -624,15 +705,34 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
     CGAL_t::vecvec<float> vertices,
     CGAL_t::vecvec<int> faces,
     const double target_edge_length,
-    const int n_iterations)
+    const int n_iterations,
+    std::vector<int> remesh_faces,
+    bool protect_constraints = false)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
-    PMP::isotropic_remeshing(
-        mesh.faces(),
-        target_edge_length,
-        mesh,
-        CGAL::parameters::number_of_iterations(n_iterations));
+    if (remesh_faces.size() == 0)
+    {
+        PMP::isotropic_remeshing(
+            mesh.faces(),
+            target_edge_length,
+            mesh,
+            CGAL::parameters::number_of_iterations(n_iterations).protect_constraints(protect_constraints));
+    }
+    else
+    {
+        std::vector<face_descriptor> faces_to_remesh;
+        for (int i : remesh_faces)
+        {
+            faces_to_remesh.push_back(face_descriptor(i));
+        }
+
+        PMP::isotropic_remeshing(
+            faces_to_remesh,
+            target_edge_length,
+            mesh,
+            CGAL::parameters::number_of_iterations(n_iterations).protect_constraints(protect_constraints));
+    }
 
     // explicit garbage collection needed as vertices are only *marked* as removed
     //
@@ -643,6 +743,83 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
 
     return pair;
+}
+
+MeshWithPMaps pmp_isotropic_remeshing_with_id(
+    CGAL_t::vecvec<float> vertices,
+    CGAL_t::vecvec<int> faces,
+    const double target_edge_length,
+    const int n_iterations,
+    std::vector<int> remesh_faces,
+    bool protect_constraints = false)
+{
+    int i, id;
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+
+    Surface_mesh::Property_map<vertex_descriptor, int> orig_v_id;
+    Surface_mesh::Property_map<face_descriptor, int> orig_f_id;
+    bool created;
+    boost::tie(orig_v_id, created) = mesh.add_property_map<vertex_descriptor, int>("v:orig_v_id", -1);
+    boost::tie(orig_f_id, created) = mesh.add_property_map<face_descriptor, int>("f:orig_f_id", -1);
+    id = 0;
+    for (auto v : mesh.vertices())
+    {
+        orig_v_id[v] = id++;
+    }
+    id = 0;
+    for (auto f : mesh.faces())
+    {
+        orig_f_id[f] = id++;
+    }
+
+    if (remesh_faces.size() == 0)
+    {
+        PMP::isotropic_remeshing(
+            mesh.faces(),
+            target_edge_length,
+            mesh,
+            CGAL::parameters::number_of_iterations(n_iterations).protect_constraints(protect_constraints));
+    }
+    else
+    {
+        std::vector<face_descriptor> faces_to_remesh;
+        for (int i : remesh_faces)
+        {
+            faces_to_remesh.push_back(face_descriptor(i));
+        }
+
+        PMP::isotropic_remeshing(
+            faces_to_remesh,
+            target_edge_length,
+            mesh,
+            CGAL::parameters::number_of_iterations(n_iterations).protect_constraints(protect_constraints));
+    }
+
+    // explicit garbage collection needed as vertices are only *marked* as removed
+    //
+    //   https://github.com/CGAL/cgal/discussions/6625
+    //   https://doc.cgal.org/latest/Surface_mesh/index.html#sectionSurfaceMesh_memory
+    mesh.collect_garbage();
+
+    auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
+
+    std::vector<int> original_vertex_index(mesh.number_of_vertices());
+    i = 0;
+    for (auto v : mesh.vertices())
+    {
+        original_vertex_index[i] = (int)get(orig_v_id, v);
+        i++;
+    }
+
+    std::vector<int> original_face_index(mesh.number_of_faces());
+    i = 0;
+    for (auto f : mesh.faces())
+    {
+        original_face_index[i] = (int)get(orig_f_id, f);
+        i++;
+    }
+    MeshWithPMaps out = {pair.first, pair.second, original_vertex_index, original_face_index};
+    return out; // std::make_pair(pair, original_vertex_index);
 }
 
 // // Compute union between two meshes and refine.

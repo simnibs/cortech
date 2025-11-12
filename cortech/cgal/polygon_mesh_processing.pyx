@@ -1,13 +1,26 @@
 from libcpp cimport bool as cppbool
-from libcpp.vector cimport vector
 from libcpp.pair cimport pair
-from typing import Union
+from libcpp.vector cimport vector
 import numpy as np
 import numpy.typing as npt
 cimport numpy as np
 
 
 cdef extern from "polygon_mesh_processing_src.cpp" nogil:
+    cdef cppclass MeshWithPMaps:
+        vector[vector[float]] vertices
+        vector[vector[int]] faces
+        vector[int] vertices_pmap
+        vector[int] faces_pmap
+
+    vector[vector[int]] pmp_find_border_edges(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+    )
+    vector[vector[int]] pmp_extract_boundary_cycles(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+    )
     vector[cppbool] pmp_points_inside_surface(
         vector[vector[float]] vertices,
         vector[vector[int]] faces,
@@ -121,6 +134,16 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         vector[vector[int]] faces,
         double target_edge_length,
         int n_iter,
+        vector[int] remesh_faces,
+        cppbool protect_constraints,
+    )
+    MeshWithPMaps pmp_isotropic_remeshing_with_id(
+        vector[vector[float]] vertices,
+        vector[vector[int]] faces,
+        double target_edge_length,
+        int n_iter,
+        vector[int] remesh_faces,
+        cppbool protect_constraints,
     )
 
     # pair[vector[vector[float]], vector[vector[int]]] pmp_corefine_and_union(
@@ -130,6 +153,21 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
     #     vector[vector[int]] faces2,
     # )
 
+
+
+def find_border_edges(vertices: npt.NDArray, faces: npt.NDArray) -> npt.NDArray:
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef vector[vector[int]] out
+    out = pmp_find_border_edges(cpp_v, cpp_f)
+    return np.array(out, dtype=int)
+
+def extract_boundary_cycles(vertices: npt.NDArray, faces: npt.NDArray):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef vector[vector[int]] out
+    out = pmp_extract_boundary_cycles(cpp_v, cpp_f)
+    return out
 
 def points_inside_surface(
         vertices: npt.NDArray,
