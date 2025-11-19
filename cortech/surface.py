@@ -126,15 +126,18 @@ class Surface:
     def reverse_face_orientation(self):
         self.faces = self.faces[:, ::-1]
         # Ensure subdivide_faces is still valid
-        # self.faces_to_edges = self.faces_to_edges[:, order]
+        # self.faces_to_edges = self.faces_to_edges[:, ::-1]
 
     def as_mesh(self):
         return self.vertices[self.faces]
 
     def new_from(self, vertices, faces: npt.NDArray | None = None):
         """Return a new Surface object based on self but with `vertices` instead."""
-        faces = self.faces if faces is None else faces
+        faces = self.faces.copy() if faces is None else faces
         return Surface(vertices, faces, self.space, self.geometry, self.edge_pairs)
+
+    def copy(self):
+        return self.new_from(self.vertices.copy())
 
     def bounding_box(self):
         return np.stack((self.vertices.min(0), self.vertices.max(0)))
@@ -1429,10 +1432,19 @@ class Surface:
     def extract_boundary_cycles(self):
         return pmp.extract_boundary_cycles(self.vertices, self.faces)
 
+    def stitch_borders(self, inplace: bool = False):
+        v, f, vmap, fmap = pmp.stitch_borders(self.vertices, self.faces)
+        if inplace:
+            self.vertices = v
+            self.faces = f
+            return vmap, fmap
+        else:
+            return self.new_from(v, f), vmap, fmap
+
     # def snap_borders(self):
     #     return pmp.snap_borders(self.vertices, self.faces)
 
-    def remove_faces(self, faces: npt.ArrayLike):
+    def remove_faces(self, faces: npt.ArrayLike, inplace: bool = False):
         """Remove the specified faces. The surface will be pruned afterwards,
         removing any unused vertices.
 
@@ -1441,10 +1453,19 @@ class Surface:
         faces
             Indices of the faces to remove.
         """
-        self.faces = np.delete(self.faces, faces, axis=0)
-        self.prune()
+        faces = np.asarray(faces)
+        if faces.dtype == bool:
+            assert len(faces) == self.n_faces
+            faces = np.flatnonzero(faces)
+        keep_faces = np.delete(self.faces, faces, axis=0)
+        if inplace:
+            self.faces = keep_faces
+            self.prune(inplace)
+        else:
+            new = self.new_from(self.vertices, keep_faces)
+            return new.prune(inplace)
 
-    def remove_vertices(self, vertices: npt.NDArray):
+    def remove_vertices(self, vertices: npt.NDArray, inplace: bool = False):
         """Remove the specified vertices along with any faces that references
         these vertices.
 
@@ -1463,16 +1484,22 @@ class Surface:
         else:
             invalid_vertices = np.isin(self.faces, vertices)
         faces_to_remove = invalid_vertices.any(1)
-        self.remove_faces(faces_to_remove)
+        return self.remove_faces(faces_to_remove, inplace)
 
-    def prune(self):
+    def prune(self, inplace: bool = False):
         """Remove unused vertices and reindex faces."""
         vertices_used = np.unique(self.faces)
         reindexer = np.zeros(self.n_vertices, dtype=self.faces.dtype)
         reindexer[vertices_used] = np.arange(vertices_used.size, dtype=self.faces.dtype)
 
-        self.vertices = self.vertices[vertices_used]
-        self.faces = reindexer[self.faces]
+        v = self.vertices[vertices_used]
+        f = reindexer[self.faces]
+
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
 
     # def join(self, other):
     #     # Update faces first!
@@ -1721,7 +1748,8 @@ class Surface:
         import pyvista as pv
 
         m = pv.read(filename)
-        return cls(m.points, m.faces.reshape(-1, 4)[:, 1:], **kwargs)
+        faces = m.cells if m.faces is None else m.faces
+        return cls(m.points, faces.reshape(-1, 4)[:, 1:], **kwargs)
 
     @classmethod
     def from_file(cls, filename: Path | str, **kwargs):
@@ -1903,6 +1931,7 @@ def shrink_surface(
         if do_remesh:
             print(">> Remeshing")
             s.isotropic_remeshing(**remesh_kwargs, inplace=True)
+            s.tangential_relaxation(n_iter=5, inplace=True)
 
         if do_decouple:
             if i < len(smooth_kwargs):

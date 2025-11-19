@@ -20,7 +20,9 @@ if host_os == 'windows'
     cpp_cgal_args += win_args
 endif
 
-cpp_cgal_macros = ['-DCGAL_EIGEN3_ENABLED']
+cpp_cgal_macros = [
+    '-DCGAL_EIGEN3_ENABLED'# '-DCGAL_PMP_USE_CERES_SOLVER'
+]
 # PMP area smoothing needs this
 # -DCGAL_PMP_USE_CERES_SOLVER
 
@@ -31,7 +33,7 @@ cgal_helpers_dep = declare_dependency(
     sources: 'cgal_helpers.cpp',
 )
 
-pmp = python.extension_module(
+aabb_tree = python.extension_module(
     'aabb_tree',
     cython_gen_cpp.process('aabb_tree.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
@@ -40,7 +42,7 @@ pmp = python.extension_module(
     subdir: cgal_dir,
 )
 
-pmp = python.extension_module(
+alpha_wrap_3 = python.extension_module(
     'alpha_wrap_3',
     cython_gen_cpp.process('alpha_wrap_3.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
@@ -49,7 +51,7 @@ pmp = python.extension_module(
     subdir: cgal_dir,
 )
 
-pmp = python.extension_module(
+convex_hull_3 = python.extension_module(
     'convex_hull_3',
     cython_gen_cpp.process('convex_hull_3.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
@@ -67,7 +69,16 @@ pmp = python.extension_module(
     subdir: cgal_dir,
 )
 
-pmp = python.extension_module(
+mesh_3 = python.extension_module(
+    'mesh_3',
+    cython_gen_cpp.process('mesh_3.pyx'),
+    cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
+    dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep],
+    install: true,
+    subdir: cgal_dir,
+)
+
+sms = python.extension_module(
     'surface_mesh_simplification',
     cython_gen_cpp.process('surface_mesh_simplification.pyx'),
     cpp_args: [cython_cpp_args, cpp_cgal_args, cpp_cgal_macros],
