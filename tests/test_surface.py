@@ -305,7 +305,7 @@ class TestSurface:
         d = copy.deepcopy(diamond)
         d.vertices = np.concatenate((np.ones_like(d.vertices), d.vertices), axis=0)
         d.faces += diamond.n_vertices
-        d.prune()
+        d = d.prune()
 
         np.testing.assert_allclose(d.vertices, diamond.vertices)
         np.testing.assert_allclose(d.faces, diamond.faces)
