@@ -14,6 +14,7 @@
 #include <CGAL/Polygon_mesh_processing/repair_self_intersections.h>
 #include <CGAL/Polygon_mesh_processing/self_intersections.h>
 #include <CGAL/Polygon_mesh_processing/smooth_shape.h>
+#include <CGAL/Polygon_mesh_processing/stitch_borders.h>
 #include <CGAL/Polygon_mesh_processing/tangential_relaxation.h>
 #include <CGAL/Polygon_mesh_processing/interpolated_corrected_curvatures.h>
 #include <CGAL/Polygon_mesh_processing/orientation.h>
@@ -34,7 +35,16 @@ using face_descriptor = Surface_mesh::Face_index;
 using halfedge_descriptor = Surface_mesh::Halfedge_index;
 using vertex_descriptor = Surface_mesh::Vertex_index;
 
+using PointVector = std::vector<std::vector<float>>;
+using IndexVector = std::vector<std::vector<int>>;
+
 namespace PMP = CGAL::Polygon_mesh_processing;
+
+struct MeshOutput
+{
+    PointVector vertices;
+    IndexVector faces;
+};
 
 struct MeshWithPMaps
 {
@@ -43,6 +53,61 @@ struct MeshWithPMaps
     std::vector<int> vertices_pmap;
     std::vector<int> faces_pmap;
 };
+
+Surface_mesh::Property_map<vertex_descriptor, int> make_vertex_id_map(
+    Surface_mesh mesh, std::string name)
+{
+    Surface_mesh::Property_map<vertex_descriptor, int> v_id;
+    bool created;
+    boost::tie(v_id, created) = mesh.add_property_map<vertex_descriptor, int>(name, -1);
+    int id = 0;
+    for (auto v : mesh.vertices())
+        v_id[v] = id++;
+    return v_id;
+}
+
+Surface_mesh::Property_map<face_descriptor, int> make_face_id_map(
+    Surface_mesh mesh, std::string name)
+{
+    Surface_mesh::Property_map<face_descriptor, int> f_id;
+    bool created;
+    boost::tie(f_id, created) = mesh.add_property_map<face_descriptor, int>(name, -1);
+    int id = 0;
+    for (auto v : mesh.faces())
+        f_id[v] = id++;
+    return f_id;
+}
+
+std::vector<int> vertex_map_to_vector(
+    Surface_mesh mesh, std::string name)
+{
+    // pmap is std::optional< ... >
+    auto pmap = mesh.property_map<vertex_descriptor, int>(name);
+    assert(pmap);
+    auto pmap_value = pmap.value();
+    std::vector<int> v_map_vec(mesh.number_of_vertices());
+    int i = 0;
+    for (auto v : mesh.vertices())
+    {
+        v_map_vec[i++] = pmap_value[v];
+    }
+    return v_map_vec;
+}
+std::vector<int> face_map_to_vector(
+    Surface_mesh mesh,
+    std::string name)
+{
+    auto pmap = mesh.property_map<face_descriptor, int>(name);
+    assert(pmap);
+    auto pmap_value = pmap.value();
+    std::vector<int> f_map_vec(mesh.number_of_faces());
+    int i = 0;
+    for (auto f : mesh.faces())
+    {
+        f_map_vec[i++] = pmap_value[f];
+    }
+    return f_map_vec;
+}
 
 // struct Array_traits
 // {
@@ -64,9 +129,9 @@ struct MeshWithPMaps
 //     Less_xyz_3 less_xyz_3_object() const { return Less_xyz_3(); }
 // };
 
-// std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_repair_mesh(
-//     CGAL_t::vecvec<float> vertices,
-//     CGAL_t::vecvec<int> faces)
+// MeshOutput pmp_repair_mesh(
+//     PointVector vertices,
+//     IndexVector faces)
 // {
 //     // int n_vertices = vertices.size();
 
@@ -92,34 +157,34 @@ struct MeshWithPMaps
 //     // PMP::orient_polygon_soup(points, polygons);
 //     // PMP::polygon_soup_to_polygon_mesh(points, polygons, mesh);
 
-//     CGAL_t::vecvec<float> outpoints;
+//     PointVector outpoints;
 //     for (int i = 0; i < points.size(); ++i)
 //     {
 //         outpoints[i] = {points[i][0], points[i][1], points[i][2]};
 //     }
 
-//     CGAL_t::vecvec<int> outpolygons;
+//     IndexVector outpolygons;
 //     for (int i = 0; i < polygons.size(); ++i)
 //     {
 //         outpolygons[i] = {polygons[i][0], polygons[i][1], polygons[i][2]};
 //     }
 
-//     return std::make_pair(outpoints, outpolygons);
+//     return {outpoints, outpolygons};
 // }
 
-// std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_snap_borders(
-//     CGAL_t::vecvec<float> vertices,
-//     CGAL_t::vecvec<int> faces)
+// MeshOutput pmp_snap_borders(
+//     PointVector vertices,
+//     IndexVector faces)
 // {
 //     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 //     PMP::experimental::snap_borders(mesh);
 //     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
-//     return pair;
+//     return {pair.first, pair.second};
 // }
 
-CGAL_t::vecvec<int> pmp_extract_boundary_cycles(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces)
+IndexVector pmp_extract_boundary_cycles(
+    PointVector vertices,
+    IndexVector faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
@@ -128,7 +193,7 @@ CGAL_t::vecvec<int> pmp_extract_boundary_cycles(
     PMP::extract_boundary_cycles(mesh, std::back_inserter(boundary_cycles));
 
     // cycle is a vector of halfedges forming one boundary loop
-    CGAL_t::vecvec<int> boundary_cycles_indices;
+    IndexVector boundary_cycles_indices;
     // for (auto cycle : boundary_cycles)
     // {
     //     // std::vector<int> boundary_cycles_index(cycle.size());
@@ -142,7 +207,7 @@ CGAL_t::vecvec<int> pmp_extract_boundary_cycles(
     return boundary_cycles_indices;
 }
 
-// CGAL_t::vecvec<int> faces(n_faces, std::vector<int>(3));
+// IndexVector faces(n_faces, std::vector<int>(3));
 
 // // for each face index, iterate over its halfedges and return all `target` vertices
 // int i = 0;
@@ -161,15 +226,15 @@ CGAL_t::vecvec<int> pmp_extract_boundary_cycles(
 // }
 // return faces;
 
-CGAL_t::vecvec<int> pmp_find_border_edges(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces)
+IndexVector pmp_find_border_edges(
+    PointVector vertices,
+    IndexVector faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
     // we don't know how many edges are border edges but preallocate too much
     // memory and resize later
     int n_edges = mesh.number_of_edges();
-    CGAL_t::vecvec<int> edges(n_edges, std::vector<int>(2));
+    IndexVector edges(n_edges, std::vector<int>(2));
     int i = 0;
     for (edge_descriptor e : mesh.edges())
     {
@@ -188,9 +253,50 @@ CGAL_t::vecvec<int> pmp_find_border_edges(
     return edges;
 }
 
-std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_hole_fill_refine_fair(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces)
+MeshWithPMaps pmp_stitch_borders(PointVector vertices, IndexVector faces)
+{
+    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+    // auto orig_v_id = make_vertex_id_map(mesh);
+    // auto orig_f_id = make_face_id_map(mesh);
+
+    int i, id;
+
+    Surface_mesh::Property_map<vertex_descriptor, int> orig_v_id;
+    Surface_mesh::Property_map<face_descriptor, int> orig_f_id;
+    bool created;
+    boost::tie(orig_v_id, created) = mesh.add_property_map<vertex_descriptor, int>("v:orig_v_id", -1);
+    boost::tie(orig_f_id, created) = mesh.add_property_map<face_descriptor, int>("f:orig_f_id", -1);
+    id = 0;
+    for (auto v : mesh.vertices())
+    {
+        orig_v_id[v] = id++;
+    }
+    id = 0;
+    for (auto f : mesh.faces())
+    {
+        orig_f_id[f] = id++;
+    }
+
+    PMP::stitch_borders(mesh);
+    mesh.collect_garbage();
+    auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
+
+    std::vector<int> original_vertex_index(mesh.number_of_vertices());
+    i = 0;
+    for (auto v : mesh.vertices())
+        original_vertex_index[i++] = orig_v_id[v];
+
+    std::vector<int> original_face_index(mesh.number_of_faces());
+    i = 0;
+    for (auto f : mesh.faces())
+        original_face_index[i++] = orig_f_id[f];
+
+    // auto original_vertex_index = vertex_map_to_vector(mesh, orig_v_id);
+    // auto original_face_index = face_map_to_vector(mesh, orig_f_id);
+    return {pair.first, pair.second, original_vertex_index, original_face_index};
+}
+
+MeshOutput pmp_hole_fill_refine_fair(PointVector vertices, IndexVector faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
@@ -225,12 +331,12 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_hole_fill_refine_fair(
     std::cout << nb_holes << " holes have been filled" << std::endl;
     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
 
-    return pair;
+    return {pair.first, pair.second};
 }
 
-std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_split(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+MeshOutput pmp_split(
+    PointVector vertices,
+    IndexVector faces,
     std::vector<float> plane_origin,
     std::vector<float> plane_direction)
 {
@@ -243,12 +349,12 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_split(
 
     PMP::split(mesh, plane);
     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
-    return pair;
+    return {pair.first, pair.second};
 }
 
-std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_clip(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+MeshOutput pmp_clip(
+    PointVector vertices,
+    IndexVector faces,
     std::vector<float> plane_origin,
     std::vector<float> plane_direction)
 {
@@ -263,14 +369,14 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_clip(
     PMP::clip(mesh, plane, CGAL::parameters::clip_volume(true));
     mesh.collect_garbage();
     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
-    return pair;
+    return {pair.first, pair.second};
 }
 
-CGAL_t::vecvec<int> pmp_intersecting_meshes(
-    CGAL_t::vecvec<float> vertices0,
-    CGAL_t::vecvec<int> faces0,
-    CGAL_t::vecvec<float> vertices1,
-    CGAL_t::vecvec<int> faces1)
+IndexVector pmp_intersecting_meshes(
+    PointVector vertices0,
+    IndexVector faces0,
+    PointVector vertices1,
+    IndexVector faces1)
 {
     Surface_mesh mesh0 = CGAL_sm::build(vertices0, faces0);
     Surface_mesh mesh1 = CGAL_sm::build(vertices1, faces1);
@@ -283,7 +389,7 @@ CGAL_t::vecvec<int> pmp_intersecting_meshes(
     // PMP::self_intersections<CGAL::Parallel_if_available_tag>(mesh.faces(), mesh, std::back_inserter(intersecting_tris));
 
     int n_intersections = intersecting_tris.size();
-    CGAL_t::vecvec<int> intersecting_faces(n_intersections, std::vector<int>(2));
+    IndexVector intersecting_faces(n_intersections, std::vector<int>(2));
     for (int i = 0; i < n_intersections; i++)
     {
         intersecting_faces[i][0] = (int)intersecting_tris[i].first;
@@ -293,7 +399,7 @@ CGAL_t::vecvec<int> pmp_intersecting_meshes(
     return intersecting_faces;
 }
 
-CGAL_t::vecvec<float> pmp_interpolated_corrected_curvatures(CGAL_t::vecvec<float> vertices, CGAL_t::vecvec<int> faces)
+CGAL_t::vecvec<float> pmp_interpolated_corrected_curvatures(PointVector vertices, IndexVector faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
@@ -342,9 +448,9 @@ CGAL_t::vecvec<float> pmp_interpolated_corrected_curvatures(CGAL_t::vecvec<float
 }
 
 std::vector<bool> pmp_points_inside_surface(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
-    CGAL_t::vecvec<float> points,
+    PointVector vertices,
+    IndexVector faces,
+    PointVector points,
     bool on_boundary_is_inside = true)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
@@ -375,18 +481,18 @@ std::vector<bool> pmp_points_inside_surface(
     return is_inside;
 }
 
-std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_remove_self_intersections(
-    CGAL_t::vecvec<float> vertices, CGAL_t::vecvec<int> faces)
+MeshOutput pmp_remove_self_intersections(
+    PointVector vertices, IndexVector faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
     PMP::experimental::remove_self_intersections(mesh.faces(), mesh); // optional args
     mesh.collect_garbage();
     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
 
-    return pair;
+    return {pair.first, pair.second};
 }
 
-CGAL_t::vecvec<int> pmp_self_intersections(CGAL_t::vecvec<float> vertices, CGAL_t::vecvec<int> faces)
+IndexVector pmp_self_intersections(PointVector vertices, IndexVector faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
 
@@ -395,7 +501,7 @@ CGAL_t::vecvec<int> pmp_self_intersections(CGAL_t::vecvec<float> vertices, CGAL_
         mesh, std::back_inserter(intersecting_tris));
 
     int n_intersections = intersecting_tris.size();
-    CGAL_t::vecvec<int> intersecting_faces(n_intersections, std::vector<int>(2));
+    IndexVector intersecting_faces(n_intersections, std::vector<int>(2));
     for (int i = 0; i < n_intersections; i++)
     {
         intersecting_faces[i][0] = (int)intersecting_tris[i].first;
@@ -406,8 +512,8 @@ CGAL_t::vecvec<int> pmp_self_intersections(CGAL_t::vecvec<float> vertices, CGAL_
 }
 
 std::pair<std::vector<int>, std::vector<int>> pmp_connected_components(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+    PointVector vertices,
+    IndexVector faces,
     std::vector<int> constrained_faces)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
@@ -496,7 +602,7 @@ std::pair<std::vector<int>, std::vector<int>> pmp_connected_components(
 }
 
 // std::pair<std::vector<int>,std::vector<int>> pmp_volume_connected_components(
-//     CGAL_t::vecvec<int> faces,
+//     IndexVector faces,
 //     bool do_orientation_tests = false,
 //     bool do_self_intersection_tests = false)
 // {
@@ -542,9 +648,9 @@ std::pair<std::vector<int>, std::vector<int>> pmp_connected_components(
 //     return pair;
 // }
 
-CGAL_t::vecvec<float> pmp_tangential_relaxation(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+PointVector pmp_tangential_relaxation(
+    PointVector vertices,
+    IndexVector faces,
     std::vector<int> constrained_vertices,
     const unsigned int nb_iterations)
 {
@@ -567,9 +673,9 @@ CGAL_t::vecvec<float> pmp_tangential_relaxation(
     return vertices_out;
 }
 
-CGAL_t::vecvec<float> pmp_smooth_shape(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+PointVector pmp_smooth_shape(
+    PointVector vertices,
+    IndexVector faces,
     std::vector<int> constrained_vertices,
     const double time,
     const unsigned int nb_iterations)
@@ -594,9 +700,9 @@ CGAL_t::vecvec<float> pmp_smooth_shape(
     return vertices_out;
 }
 
-CGAL_t::vecvec<float> pmp_smooth_shape_by_curvature_threshold(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+PointVector pmp_smooth_shape_by_curvature_threshold(
+    PointVector vertices,
+    IndexVector faces,
     const double time,
     const unsigned int nb_iterations,
     const double curv_threshold = 0.0,
@@ -660,9 +766,9 @@ CGAL_t::vecvec<float> pmp_smooth_shape_by_curvature_threshold(
     return vertices_out;
 }
 
-CGAL_t::vecvec<float> pmp_smooth_angle_and_area(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+PointVector pmp_smooth_angle_and_area(
+    PointVector vertices,
+    IndexVector faces,
     std::vector<int> constrained_vertices,
     const unsigned int nb_iterations,
     bool use_angle_smoothing = true,
@@ -691,9 +797,9 @@ CGAL_t::vecvec<float> pmp_smooth_angle_and_area(
     return vertices_out;
 }
 
-CGAL_t::vecvec<float> pmp_fair(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+PointVector pmp_fair(
+    PointVector vertices,
+    IndexVector faces,
     std::vector<int> indices)
 {
     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
@@ -711,9 +817,9 @@ CGAL_t::vecvec<float> pmp_fair(
     return vertices_faired;
 }
 
-std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+MeshOutput pmp_isotropic_remeshing(
+    PointVector vertices,
+    IndexVector faces,
     const double target_edge_length,
     const int n_iterations,
     std::vector<int> remesh_faces,
@@ -752,12 +858,12 @@ std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_isotropic_remeshing(
 
     auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
 
-    return pair;
+    return {pair.first, pair.second};
 }
 
 MeshWithPMaps pmp_isotropic_remeshing_with_id(
-    CGAL_t::vecvec<float> vertices,
-    CGAL_t::vecvec<int> faces,
+    PointVector vertices,
+    IndexVector faces,
     const double target_edge_length,
     const int n_iterations,
     std::vector<int> remesh_faces,
@@ -816,28 +922,22 @@ MeshWithPMaps pmp_isotropic_remeshing_with_id(
     std::vector<int> original_vertex_index(mesh.number_of_vertices());
     i = 0;
     for (auto v : mesh.vertices())
-    {
-        original_vertex_index[i] = (int)get(orig_v_id, v);
-        i++;
-    }
+        original_vertex_index[i++] = orig_v_id[v];
 
     std::vector<int> original_face_index(mesh.number_of_faces());
     i = 0;
     for (auto f : mesh.faces())
-    {
-        original_face_index[i] = (int)get(orig_f_id, f);
-        i++;
-    }
-    MeshWithPMaps out = {pair.first, pair.second, original_vertex_index, original_face_index};
-    return out; // std::make_pair(pair, original_vertex_index);
+        original_face_index[i++] = orig_f_id[f];
+
+    return {pair.first, pair.second, original_vertex_index, original_face_index};
 }
 
 // // Compute union between two meshes and refine.
-// std::pair<CGAL_t::vecvec<float>, CGAL_t::vecvec<int>> pmp_corefine_and_union(
-//     CGAL_t::vecvec<float> vertices1,
-//     CGAL_t::vecvec<int> faces1,
-//     CGAL_t::vecvec<float> vertices2,
-//     CGAL_t::vecvec<int> faces2)
+// MeshOutput pmp_corefine_and_union(
+//     PointVector vertices1,
+//     IndexVector faces1,
+//     PointVector vertices2,
+//     IndexVector faces2)
 // {
 //     Surface_mesh mesh1 = CGAL_sm::build(vertices1, faces1);
 //     Surface_mesh mesh2 = CGAL_sm::build(vertices2, faces2);
@@ -848,6 +948,6 @@ MeshWithPMaps pmp_isotropic_remeshing_with_id(
 //     {
 //         std::cout << "Union was successfully computed\n";
 //         auto pair = CGAL_sm::extract_vertices_and_faces(mesh_union);
-//         return pair;
+//         return {pair.first, pair.second};
 //     }
 // }

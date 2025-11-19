@@ -6,97 +6,111 @@ import numpy.typing as npt
 cimport numpy as np
 
 
+ctypedef vector[vector[float]] PointVector
+ctypedef vector[vector[int]] IndexVector
+
+
 cdef extern from "polygon_mesh_processing_src.cpp" nogil:
+    cdef cppclass MeshOutput:
+        PointVector vertices
+        IndexVector faces
+
     cdef cppclass MeshWithPMaps:
-        vector[vector[float]] vertices
-        vector[vector[int]] faces
+        PointVector vertices
+        IndexVector faces
         vector[int] vertices_pmap
         vector[int] faces_pmap
 
-    vector[vector[int]] pmp_find_border_edges(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-    )
-    vector[vector[int]] pmp_extract_boundary_cycles(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-    )
-    # pair[vector[vector[float]], vector[vector[int]]] pmp_snap_borders(
-    #     vector[vector[float]] vertices,
-    #     vector[vector[int]] faces,
-    # )
-    vector[cppbool] pmp_points_inside_surface(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-        vector[vector[float]] points,
-        cppbool on_boundary_is_inside,
-    )
-
-    pair[vector[vector[float]], vector[vector[int]]] pmp_split(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-        vector[float] plane_origin,
-        vector[float] plane_direction,
-    )
-
-    pair[vector[vector[float]], vector[vector[int]]] pmp_hole_fill_refine_fair(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-    )
-
-    pair[vector[vector[float]], vector[vector[int]]] pmp_clip(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
+    MeshOutput pmp_clip(
+        PointVector vertices,
+        IndexVector faces,
         vector[float] plane_origin,
         vector[float] plane_direction,
         # cppbool clip_volume
     )
-
-    # pair[vector[vector[float]], vector[vector[int]]] pmp_repair_mesh(
-    #     vector[vector[float]] vertices,
-    #     vector[vector[int]] faces,
-    # )
-
-    pair[vector[vector[float]], vector[vector[int]]] pmp_remove_self_intersections(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-    )
-
-    vector[vector[int]] pmp_self_intersections(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-    )
-
-    vector[vector[int]] pmp_intersecting_meshes(
-        vector[vector[float]] vertices0,
-        vector[vector[int]] faces0,
-        vector[vector[float]] vertices1,
-        vector[vector[int]] faces1,
-    )
-
     pair[vector[int], vector[int]] pmp_connected_components(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
+        PointVector vertices,
+        IndexVector faces,
         vector[int] contrained_faces,
     )
+    IndexVector pmp_extract_boundary_cycles(
+        PointVector vertices, IndexVector faces
+    )
+    PointVector pmp_fair(
+        PointVector vertices,
+        IndexVector faces,
+        vector[int] indices,
+    )
+
+    IndexVector pmp_find_border_edges(PointVector vertices, IndexVector faces)
+    MeshOutput pmp_hole_fill_refine_fair(
+        PointVector vertices, IndexVector faces
+    )
+    IndexVector pmp_intersecting_meshes(
+        PointVector vertices0,
+        IndexVector faces0,
+        PointVector vertices1,
+        IndexVector faces1,
+    )
+    MeshOutput pmp_isotropic_remeshing(
+        PointVector vertices,
+        IndexVector faces,
+        double target_edge_length,
+        int n_iter,
+        vector[int] remesh_faces,
+        cppbool protect_constraints,
+    )
+    MeshWithPMaps pmp_isotropic_remeshing_with_id(
+        PointVector vertices,
+        IndexVector faces,
+        double target_edge_length,
+        int n_iter,
+        vector[int] remesh_faces,
+        cppbool protect_constraints,
+    )
+
+    MeshWithPMaps pmp_stitch_borders(PointVector vertices, IndexVector faces)
+    # MeshOutput pmp_snap_borders(
+    #     PointVector vertices, IndexVector faces,
+    # )
+    vector[cppbool] pmp_points_inside_surface(
+        PointVector vertices,
+        IndexVector faces,
+        PointVector points,
+        cppbool on_boundary_is_inside,
+    )
+
+
+    # MeshOutput pmp_repair_mesh(
+    #     PointVector vertices,
+    #     IndexVector faces,
+    # )
+
+    MeshOutput pmp_remove_self_intersections(
+        PointVector vertices, IndexVector faces
+    )
+    IndexVector pmp_self_intersections(PointVector vertices, IndexVector faces)
+
+
+
 
     # pair[vector[int], vector[int]] pmp_volume_connected_components(
-    #     vector[vector[int]] faces,
+    #     IndexVector faces,
     #     cppbool do_orientation_tests,
     #     cppbool do_self_intersection_tests,
     # )
 
-    vector[vector[float]] pmp_smooth_shape(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
+    PointVector pmp_smooth_shape(
+        PointVector vertices,
+        IndexVector faces,
         vector[int] constrained_vertices,
         double time,
         int n_iter
     )
 
-    vector[vector[float]] pmp_smooth_shape_by_curvature_threshold(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
+    PointVector pmp_smooth_shape_by_curvature_threshold(
+        PointVector vertices,
+        IndexVector faces,
         double time,
         int n_iter,
         double curv_threshold,
@@ -104,21 +118,21 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         double ball_radius,
     )
 
-    vector[vector[float]] pmp_tangential_relaxation(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
+    PointVector pmp_tangential_relaxation(
+        PointVector vertices,
+        IndexVector faces,
         vector[int] constrained_vertices,
         int n_iter
     )
 
     vector[vector[float]] pmp_interpolated_corrected_curvatures(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
+        PointVector vertices,
+        IndexVector faces,
     )
 
-    vector[vector[float]] pmp_smooth_angle_and_area(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
+    PointVector pmp_smooth_angle_and_area(
+        PointVector vertices,
+        IndexVector faces,
         vector[int] constrained_vertices,
         int niter,
         cppbool use_angle_smoothing,
@@ -127,41 +141,39 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         cppbool use_safety_constraints
     )
 
-    vector[vector[float]] pmp_fair(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-        vector[int] indices,
+    MeshOutput pmp_split(
+        PointVector vertices,
+        IndexVector faces,
+        vector[float] plane_origin,
+        vector[float] plane_direction,
     )
 
-    pair[vector[vector[float]], vector[vector[int]]] pmp_isotropic_remeshing(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-        double target_edge_length,
-        int n_iter,
-        vector[int] remesh_faces,
-        cppbool protect_constraints,
-    )
-    MeshWithPMaps pmp_isotropic_remeshing_with_id(
-        vector[vector[float]] vertices,
-        vector[vector[int]] faces,
-        double target_edge_length,
-        int n_iter,
-        vector[int] remesh_faces,
-        cppbool protect_constraints,
-    )
 
-    # pair[vector[vector[float]], vector[vector[int]]] pmp_corefine_and_union(
-    #     vector[vector[float]] vertices1,
-    #     vector[vector[int]] faces1,
-    #     vector[vector[float]] vertices2,
-    #     vector[vector[int]] faces2,
+
+
+
+    # MeshOutput pmp_corefine_and_union(
+    #     PointVector vertices1,
+    #     IndexVector faces1,
+    #     PointVector vertices2,
+    #     IndexVector faces2,
     # )
+
+cdef _from_MeshOutput(MeshOutput out):
+    return np.array(out.vertices, float), np.array(out.faces, int)
+
+cdef _from_MeshWithPMaps(MeshWithPMaps out):
+    v = np.array(out.vertices, float)
+    f = np.array(out.faces, int)
+    v_pmap = np.array(out.vertices_pmap, int)
+    f_pmap = np.array(out.faces_pmap, int)
+    return v, f, v_pmap, f_pmap
 
 
 # def snap_borders(vertices: npt.NDArray, faces: npt.NDArray):
 #     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
 #     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-#     cdef pair[vector[vector[float]], vector[vector[int]]] out
+#     cdef MeshOutput out
 
 #     out = pmp_snap_borders(cpp_v, cpp_f)
 #     v = np.array(out.first, dtype=float)
@@ -171,16 +183,24 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
 def find_border_edges(vertices: npt.NDArray, faces: npt.NDArray) -> npt.NDArray:
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef vector[vector[int]] out
+    cdef IndexVector out
     out = pmp_find_border_edges(cpp_v, cpp_f)
     return np.array(out, dtype=int)
 
 def extract_boundary_cycles(vertices: npt.NDArray, faces: npt.NDArray):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef vector[vector[int]] out
+    cdef IndexVector out
     out = pmp_extract_boundary_cycles(cpp_v, cpp_f)
     return out
+
+
+def stitch_borders(vertices: npt.NDArray, faces: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray]:
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef MeshWithPMaps out
+    out = pmp_stitch_borders(cpp_v, cpp_f)
+    return _from_MeshWithPMaps(out)
 
 def points_inside_surface(
         vertices: npt.NDArray,
@@ -229,15 +249,9 @@ def hole_fill_refine_fair(vertices: npt.NDArray, faces: npt.NDArray) -> tuple[np
     """
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-
-    cdef pair[vector[vector[float]], vector[vector[int]]] out
-
+    cdef MeshOutput out
     out = pmp_hole_fill_refine_fair(cpp_v, cpp_f)
-
-    v = np.array(out.first, dtype=float)
-    f = np.array(out.second, dtype=int)
-
-    return v, f
+    return _from_MeshOutput(out)
 
 
 def split(
@@ -262,15 +276,9 @@ def split(
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[float] cpp_orig = np.ascontiguousarray(plane_origin, dtype=np.float32)
     cdef np.ndarray[float] cpp_dir = np.ascontiguousarray(plane_direction, dtype=np.float32)
-
-    cdef pair[vector[vector[float]], vector[vector[int]]] out
-
+    cdef MeshOutput out
     out = pmp_split(cpp_v, cpp_f, cpp_orig, cpp_dir)
-
-    v = np.array(out.first, dtype=float)
-    f = np.array(out.second, dtype=int)
-
-    return v, f
+    return _from_MeshOutput(out)
 
 def clip(
         vertices: npt.NDArray,
@@ -297,15 +305,10 @@ def clip(
     cdef np.ndarray[float] cpp_orig = np.ascontiguousarray(plane_origin, dtype=np.float32)
     cdef np.ndarray[float] cpp_dir = np.ascontiguousarray(plane_direction, dtype=np.float32)
     # cdef cppbool cpp_clip_volume = clip_volume
-
-    cdef pair[vector[vector[float]], vector[vector[int]]] out
+    cdef MeshOutput out
 
     out = pmp_clip(cpp_v, cpp_f, cpp_orig, cpp_dir)
-
-    v = np.array(out.first, dtype=float)
-    f = np.array(out.second, dtype=int)
-
-    return v, f
+    return _from_MeshOutput(out)
 
 # def repair_mesh(
 #         vertices: npt.NDArray, faces: npt.NDArray,
@@ -313,14 +316,10 @@ def clip(
 #     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
 #     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
 
-#     cdef pair[vector[vector[float]], vector[vector[int]]] out
+#     cdef MeshOutput out
 
 #     out = pmp_repair_mesh(cpp_v, cpp_f)
-
-#     v = np.array(out.first, dtype=float)
-#     f = np.array(out.second, dtype=int)
-
-#     return v, f
+#      return _from_MeshOutput(out)
 
 
 def remove_self_intersections(
@@ -341,15 +340,9 @@ def remove_self_intersections(
     """
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-
-    cdef pair[vector[vector[float]], vector[vector[int]]] out
-
+    cdef MeshOutput out
     out = pmp_remove_self_intersections(cpp_v, cpp_f)
-
-    v = np.array(out.first, dtype=float)
-    f = np.array(out.second, dtype=int)
-
-    return v, f
+    return _from_MeshOutput(out)
 
 
 def self_intersections(vertices: npt.ArrayLike, faces: npt.ArrayLike) -> npt.NDArray:
@@ -369,7 +362,7 @@ def self_intersections(vertices: npt.ArrayLike, faces: npt.ArrayLike) -> npt.NDA
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
 
-    cdef vector[vector[int]] intersecting_pairs # list of lists
+    cdef IndexVector intersecting_pairs # list of lists
 
     intersecting_pairs = pmp_self_intersections(cpp_v, cpp_f)
 
@@ -403,7 +396,7 @@ def intersecting_meshes(
     cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
 
-    cdef vector[vector[int]] intersecting_pairs # list of lists
+    cdef IndexVector intersecting_pairs # list of lists
 
     intersecting_pairs = pmp_intersecting_meshes(cpp_v0, cpp_f0, cpp_v1, cpp_f1)
 
@@ -497,7 +490,7 @@ def smooth_shape(
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices, dtype=np.int32)
-    cdef vector[vector[float]] v
+    cdef PointVector v
 
     v = pmp_smooth_shape(cpp_v, cpp_f, cpp_constrained_vertices, time, n_iter)
 
@@ -554,7 +547,7 @@ def smooth_shape_by_curvature_threshold(
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef cppbool cpp_apply_above_curv_threshold = apply_above_curv_threshold
-    cdef vector[vector[float]] v
+    cdef PointVector v
 
     v = pmp_smooth_shape_by_curvature_threshold(cpp_v, cpp_f, time, n_iter, curv_threshold, cpp_apply_above_curv_threshold, ball_radius)
 
@@ -602,7 +595,7 @@ def tangential_relaxation(
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices, dtype=np.int32)
-    cdef vector[vector[float]] v
+    cdef PointVector v
 
     v = pmp_tangential_relaxation(cpp_v, cpp_f, cpp_constrained_vertices, n_iter)
 
@@ -643,7 +636,7 @@ def smooth_angle_and_area(
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[int] cpp_constrained_vertices = np.ascontiguousarray(constrained_vertices, dtype=np.int32)
-    cdef vector[vector[float]] v
+    cdef PointVector v
 
     v = pmp_smooth_angle_and_area(
         cpp_v,
@@ -663,7 +656,7 @@ def fair(vertices, faces, vertex_indices):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[int] cpp_vi = np.ascontiguousarray(vertex_indices, dtype=np.int32)
-    cdef vector[vector[float]] v
+    cdef PointVector v
 
     v = pmp_fair(cpp_v, cpp_f, cpp_vi)
 
@@ -710,15 +703,12 @@ def isotropic_remeshing(
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[int] cpp_remesh_faces = np.ascontiguousarray(remesh_faces, dtype=np.int32)
-    cdef pair[vector[vector[float]], vector[vector[int]]] out
+    cdef MeshOutput out
 
     out = pmp_isotropic_remeshing(
         cpp_v, cpp_f, target_edge_length, n_iter, cpp_remesh_faces, protect_constraints
     )
-    v = np.array(out.first, dtype=float)
-    f = np.array(out.second, dtype=int)
-
-    return v, f
+    return _from_MeshOutput(out)
 
 
 def isotropic_remeshing_with_id(
@@ -766,22 +756,15 @@ def isotropic_remeshing_with_id(
     out = pmp_isotropic_remeshing_with_id(
         cpp_v, cpp_f, target_edge_length, n_iter, cpp_remesh_faces, protect_constraints
     )
-    v = np.array(out.vertices, dtype=float)
-    f = np.array(out.faces, dtype=int)
-    v_pmap = np.array(out.vertices_pmap, dtype=int)
-    f_pmap = np.array(out.faces_pmap, dtype=int)
-
-    return v, f, v_pmap, f_pmap
+    return _from_MeshWithPMaps(out)
 
 # def corefine_and_union(vertices1, faces1, vertices2, faces2):
 #     cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
 #     cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
 #     cdef np.ndarray[float, ndim=2] cpp_v2 = np.ascontiguousarray(vertices2, dtype=np.float32)
 #     cdef np.ndarray[int, ndim=2] cpp_f2 = np.ascontiguousarray(faces2, dtype=np.int32)
-#     cdef pair[vector[vector[float]], vector[vector[int]]] out
+#     cdef MeshOutput out
 
 #     out = pmp_corefine_and_union(cpp_v1, cpp_f1, cpp_v2, cpp_f2)
-#     v = np.array(out.first, dtype=float)
-#     f = np.array(out.second, dtype=int)
+#     return _from_MeshOutput(out)
 
-#     return v, f
