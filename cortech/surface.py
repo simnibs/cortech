@@ -440,7 +440,7 @@ class Surface:
         return H_uv.squeeze()
 
     def compute_curvature(
-        self, percentile_clip_range=(0.1, 99.9), smooth_iter: int = 0
+        self, percentile_clip_range=(.1, 99.9), smooth_iter: int = 0
     ):
         """Compute principal, mean, and Guassian curvature.
 

@@ -5,17 +5,27 @@ from cortech.models import MODEL_DIR
 
 
 def load_model(model_name, local, hemi, registration="spherical"):
-    assert model_name in {"equivolume", "equidistance", "linear_model"}
+    assert model_name in {"equivolume", "equidistance", "linear_model", "linear_model_extra_params"}
     assert hemi in {"lh", "rh"}
     assert local in {"local", "global"}
     assert registration in {"spherical", "josa"}
 
-    linear_model_files = [
-        "intercept.linear_model.mgh",
-        "beta_k1.linear_model.mgh",
-        "beta_k2.linear_model.mgh",
-        "beta_k1k2.linear_model.mgh",
-    ]
+    if "extra_params" in model_name:
+        linear_model_files = [
+            "intercept.linear_model.mgh",
+            "beta_k1.linear_model.mgh",
+            "beta_k2.linear_model.mgh",
+            "beta_curvedness.linear_model.mgh",
+            "beta_shape_index.linear_model.mgh",
+            "beta_k1k2.linear_model.mgh",
+        ]
+    else:
+        linear_model_files = [
+            "intercept.linear_model.mgh",
+            "beta_k1.linear_model.mgh",
+            "beta_k2.linear_model.mgh",
+            "beta_k1k2.linear_model.mgh",
+        ]
 
     model_dir = Path(MODEL_DIR)
     model_dict = {}

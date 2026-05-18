@@ -252,8 +252,11 @@ class Hemisphere:
                     return_surface=return_surface,
                 )
             elif "linear" in model:
+                extra_parameters = False
+                if "extra" in model:
+                    extra_parameters = True
                 surf_tmp = self._predict_linear_model(
-                    self.infra_supra_model[model], curv
+                    self.infra_supra_model[model], curv, extra_predictors=extra_parameters
                 )
                 if return_surface:
                     surfaces[model] = self.white.new_from(surf_tmp)
@@ -345,7 +348,7 @@ class Hemisphere:
         return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
 
     def _predict_linear_model(
-        self, parameters: npt.NDArray, curv: Curvature, clip_range=(0.01, 99.9)
+            self, parameters: npt.NDArray, curv: Curvature, clip_range=(0.01, 99.9), extra_predictors: bool=False
     ):
         """Predict the infra supra border using a linear model fitted on the ex-vivo data.
         NOTE: This a little suboptimal at the moment as the model is fixed, i.e., it needs
@@ -360,6 +363,8 @@ class Hemisphere:
                A curvature object storing the average curvature values.
         clip_range : tuple(float)
                Percentile ranges to clip the curvature values.
+        extra_predictors: bool
+               Use curvedness and shape index as additional predictors
 
         Returns
         -------
@@ -372,13 +377,23 @@ class Hemisphere:
 
         k1 = np.clip(curv.k1, pk1[0], pk1[1]).T
         k2 = np.clip(curv.k2, pk2[0], pk2[1]).T
+
+        if extra_predictors:
+            curvedness = np.sqrt(0.5 * (k1**2 + k2**2))
+            shape_index = (2/np.pi) * np.arctan((k1 + k2) / (k2 -k1))
+            curvedness = curvedness - curvedness.mean()
+            shape_index = shape_index - shape_index.mean()
+
         k1 = k1 - k1.mean()
         k2 = k2 - k2.mean()
         k1k2 = k1 * k2
 
         dummy = np.ones_like(k1)
 
-        predictors = np.stack([dummy, k1, k2, k1k2]).T
+        if extra_predictors:
+            predictors = np.stack([dummy, k1, k2, curvedness, shape_index, k1k2]).T
+        else:
+            predictors = np.stack([dummy, k1, k2, k1k2]).T
 
         frac = np.einsum("ij, ij -> i", predictors, parameters)
         frac = np.clip(frac, 0, 1)
