@@ -321,7 +321,7 @@ class Hemisphere:
 
         self.infra_supra_model[f"{model_name[0]}_{model_name[1]}"] = params
 
-    def _layer_from_distance_fraction(self, f: float | npt.NDArray = 0.5):
+    def _layer_from_distance_fraction(self, f: float | npt.NDArray = 0.5, direction: npt.NDArray=None):
         """_summary_
 
         Parameters
@@ -345,7 +345,9 @@ class Hemisphere:
             fd2 = f.shape[1]
             assert fd2 == 1 or fd2 == self.white.n_vertices
         f = cortech.utils.atleast_nd_append(f, 3)
-        return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
+        if direction is None:
+            direction = self.pial.vertices - self.white.vertices
+        return np.squeeze(self.white.vertices + f * direction) 
 
     def _predict_linear_model(
             self, parameters: npt.NDArray, curv: Curvature, clip_range=(0.01, 99.9), extra_predictors: bool=False
@@ -443,10 +445,10 @@ class Hemisphere:
 
         """
         if method in {"equidistance", "equivolume"}:
+            if thickness is None:
+                thickness = self.compute_thickness()
             match method:
                 case "equivolume":
-                    if thickness is None:
-                        thickness = self.compute_thickness()
                     match curv:
                         case str():
                             curv = getattr(
@@ -456,9 +458,13 @@ class Hemisphere:
                         case _:
                             curv = np.asarray(curv)
                     frac = self.compute_equivolume_fraction(thickness, curv, frac)
+                    direction = None
                 case "equidistance":
-                    pass
-            layers = self._layer_from_distance_fraction(frac)
+                    # pass
+                    # node_to_node_thickness = self.compute_node_to_node_difference()
+                    # frac *= (thickness / (node_to_node_thickness + 1e-5))
+                    direction = self.white.compute_vertex_normals()
+            layers = self._layer_from_distance_fraction(frac, direction=direction)
             if return_surface:
                 if layers.ndim == 2:
                     layers = self.white.new_from(layers)
