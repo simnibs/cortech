@@ -1,3 +1,5 @@
+import math
+
 import numba
 import numba.typed
 import numpy as np
@@ -291,6 +293,105 @@ def bfs(
         n_visited,
         level,
     )
+
+
+@numba.njit
+def _compute_freesurfer_thickness(vw, vp, np_, knn_flat, knn_offsets):
+    """Two-pass FreeSurfer-style cortical thickness.
+
+    Mirrors MRISmeasureCorticalThickness in mrisurf_metricProperties.cpp.
+    Both passes use pial normals for the outward-direction consistency check.
+
+    Parameters
+    ----------
+    vw : (n, 3) float64
+        White matter vertex coordinates.
+    vp : (n, 3) float64
+        Pial vertex coordinates.
+    np_ : (n, 3) float64
+        Pial vertex normals.
+    knn_flat : (K,) int64
+        Flat array of k-ring neighbor indices (CSR values).
+    knn_offsets : (n+1,) int64
+        CSR-style row pointers into knn_flat.
+
+    Returns
+    -------
+    w2p_dist : (n,) float64
+    gw_dist : (n,) float64
+    directions : (n, 3) float64
+        Unit vectors from white[i] toward its closest valid pial match.
+    """
+    n = vw.shape[0]
+    w2p_dist = np.empty(n)
+    gw_dist = np.empty(n)
+    directions = np.zeros((n, 3))
+
+    for i in range(n):
+        start = knn_offsets[i]
+        end = knn_offsets[i + 1]
+
+        nx = np_[i, 0]
+        ny = np_[i, 1]
+        nz = np_[i, 2]
+
+        # Unconditional starting distance: same-index vertex (no normal check)
+        dx0 = vp[i, 0] - vw[i, 0]
+        dy0 = vp[i, 1] - vw[i, 1]
+        dz0 = vp[i, 2] - vw[i, 2]
+        init_dist = math.sqrt(dx0 * dx0 + dy0 * dy0 + dz0 * dz0)
+
+        # Pass 1: white[i] → closest valid pial[j]
+        min_w2p = init_dist
+        best_dx = dx0
+        best_dy = dy0
+        best_dz = dz0
+
+        for idx in range(start, end):
+            j = knn_flat[idx]
+            if j == i:
+                continue
+            dx = vp[j, 0] - vw[i, 0]
+            dy = vp[j, 1] - vw[i, 1]
+            dz = vp[j, 2] - vw[i, 2]
+            if dx * nx + dy * ny + dz * nz < 0:
+                continue
+            if np_[j, 0] * nx + np_[j, 1] * ny + np_[j, 2] * nz < 0:
+                continue
+            d = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if d < min_w2p:
+                min_w2p = d
+                best_dx = dx
+                best_dy = dy
+                best_dz = dz
+
+        w2p_dist[i] = min_w2p
+        if min_w2p > 0:
+            directions[i, 0] = best_dx / min_w2p
+            directions[i, 1] = best_dy / min_w2p
+            directions[i, 2] = best_dz / min_w2p
+
+        # Pass 2: closest valid white[j] from pial[i]
+        min_gw = init_dist
+
+        for idx in range(start, end):
+            j = knn_flat[idx]
+            if j == i:
+                continue
+            dx = vp[i, 0] - vw[j, 0]
+            dy = vp[i, 1] - vw[j, 1]
+            dz = vp[i, 2] - vw[j, 2]
+            if dx * nx + dy * ny + dz * nz < 0:
+                continue
+            if np_[j, 0] * nx + np_[j, 1] * ny + np_[j, 2] * nz < 0:
+                continue
+            d = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if d < min_gw:
+                min_gw = d
+
+        gw_dist[i] = min_gw
+
+    return w2p_dist, gw_dist, directions
 
 
 # @numba.njit

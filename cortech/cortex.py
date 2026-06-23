@@ -78,6 +78,49 @@ class Hemisphere:
                 raise ValueError(f"Invalid `method` {method}")
         return thickness
 
+    def compute_freesurfer_thickness(
+        self,
+        nbhd_size: int = 7,
+        max_thick: float = 5.0,
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Calculate cortical thickness using the FreeSurfer algorithm.
+
+        Mirrors MRISmeasureCorticalThickness: two-pass BFS over the k-ring
+        topological neighborhood with a pial-normal outward-direction filter.
+
+        Parameters
+        ----------
+        nbhd_size : int
+            Number of BFS rings to search (FreeSurfer default: 7).
+        max_thick : float
+            Maximum thickness value in mm (FreeSurfer default: 5.0).
+
+        Returns
+        -------
+        thickness : ndarray, shape (n_vertices,)
+            Cortical thickness in mm, capped at `max_thick`.
+        directions : ndarray, shape (n_vertices, 3)
+            Unit vectors from each white vertex toward its closest pial match.
+        """
+        vw = self.white.vertices
+        vp = self.pial.vertices
+        np_ = self.pial.vertex_normals()
+
+        knn, _ = self.white.k_ring_neighbors(nbhd_size)
+
+        knn_sizes = np.array([len(k) for k in knn], dtype=np.int64)
+        knn_offsets = np.empty(len(knn) + 1, dtype=np.int64)
+        knn_offsets[0] = 0
+        np.cumsum(knn_sizes, out=knn_offsets[1:])
+        knn_flat = np.concatenate(knn).astype(np.int64)
+
+        w2p, gw, directions = cortech.utils._compute_freesurfer_thickness(
+            vw, vp, np_, knn_flat, knn_offsets
+        )
+
+        thickness = np.minimum(0.5 * (w2p + gw), max_thick)
+        return thickness, directions
+
     def compute_average_curvature(
         self,
         white_curv: None | Curvature = None,
