@@ -5,7 +5,7 @@ import tempfile
 import nibabel as nib
 import numpy as np
 import pytest
-from scipy.spatial import cKDTree
+from scipy.spatial import KDTree
 
 from cortech.surface import Sphere, Surface
 from cortech.freesurfer import VolumeGeometry
@@ -93,34 +93,34 @@ class TestSurface:
         np.testing.assert_allclose(s.faces, sphere_tuple[1])
 
     @pytest.mark.parametrize("include_self", [False, True])
-    def test_compute_vertex_adjacency(
+    def test_adjacency_matrix_vertex(
         self, include_self, diamond, diamond_adjacency_matrix
     ):
-        a = diamond.compute_vertex_adjacency(include_self)
+        a = diamond.adjacency_matrix("vertex", include_self)
         a_true = diamond_adjacency_matrix
         if include_self:
             a_true = a_true + np.eye(diamond.n_vertices)
         np.testing.assert_array_equal(a.todense(), a_true)
 
-    def test_compute_face_barycenters(self, diamond, diamond_barycenters):
-        b = diamond.compute_face_barycenters()
+    def test_face_barycenters(self, diamond, diamond_barycenters):
+        b = diamond.face_barycenters()
         np.testing.assert_allclose(b, diamond_barycenters)
 
-    def test_compute_face_normals(self, diamond):
-        n = diamond.compute_face_normals()
-        n_true = cortech.utils.normalize(diamond.compute_face_barycenters(), axis=1)
+    def test_face_normals(self, diamond):
+        n = diamond.face_normals()
+        n_true = cortech.utils.normalize(diamond.face_barycenters(), axis=1)
         np.testing.assert_allclose(n, n_true)
 
-    def test_compute_vertex_normals(self, diamond):
-        n = diamond.compute_vertex_normals()
+    def test_vertex_normals(self, diamond):
+        n = diamond.vertex_normals()
         n_true = cortech.utils.normalize(diamond.vertices, axis=1)
         np.testing.assert_allclose(n, n_true)
 
-    def test_compute_principal_curvatures(self):
+    def test_principal_curvatures(self):
         pass
 
     # @pytest.mask.parametrize("radius", [0.5, 1.0, 5.0])
-    # def test_compute_curvature(self, radius):
+    # def test_curvature(self, radius):
     #     sphere = Surface(*fibonacci_sphere(10000, radius))
     #     curv = sphere.compute_curvature()
     #     curvs = sphere.compute_curvature(smooth_iter=10)
@@ -211,7 +211,7 @@ class TestSurface:
     def test_taubin_smooth(self):
         pass
 
-    def test_gaussian_smooth(self):
+    def test_laplacian_smooth(self):
         pass
 
     def test_get_triangle_neighbors(self, triangulation):
@@ -305,7 +305,7 @@ class TestSurface:
         d = copy.deepcopy(diamond)
         d.vertices = np.concatenate((np.ones_like(d.vertices), d.vertices), axis=0)
         d.faces += diamond.n_vertices
-        d.prune()
+        d = d.prune()
 
         np.testing.assert_allclose(d.vertices, diamond.vertices)
         np.testing.assert_allclose(d.faces, diamond.faces)
@@ -454,28 +454,23 @@ class TestSphere:
         weights = rng.uniform(size=(sphere_reg.n_faces, 3))
         weights /= weights.sum(1, keepdims=True)
 
-        # We cheat and use Surface instead of SphericalRegistration to avoid
-        # the vertices being projected back on the sphere, hence rendering the
-        # comparison to the `weights` array invalid
-        n = sphere_reg.n_faces
         # the triangles of the surface being morphed *to* are unused so just
         # generate some random ones
         dest_points = np.sum(sphere_reg.as_mesh() * weights[..., None], 1)
-        dest_sphere = Surface(dest_points, rng.integers(1, n, (2 * n - 4, 3)))
 
-        dest_field = sphere_reg.project_and_resample(
-            dest_sphere, source_field, method=method
+        dest_field = sphere_reg.set_projection_and_resample(
+            dest_points, source_field, method=method
         )
 
         match method:
             case "nearest":
-                _, closest = cKDTree(sphere_reg.vertices).query(dest_sphere.vertices)
+                _, closest = KDTree(sphere_reg.vertices).query(dest_points)
                 # Test projection
-                np.testing.assert_allclose(sphere_reg._mapping_matrix.data, 1)
+                np.testing.assert_allclose(sphere_reg._proj_matrix.data, 1)
                 # Test sampling
                 np.testing.assert_allclose(source_field[closest], dest_field)
             case "linear":
-                # The weights in _mapping_matrix are sorted by face index,
+                # The weights in _proj_matrix are sorted by face index,
                 # hence we need to sort the `weights` array before checking
                 weights_sorted = weights[
                     np.repeat(np.arange(sphere_reg.n_faces), 3).reshape(-1, 3),
@@ -483,7 +478,7 @@ class TestSphere:
                 ]
                 # Test projection
                 np.testing.assert_allclose(
-                    sphere_reg._mapping_matrix.data, weights_sorted.ravel()
+                    sphere_reg._proj_matrix.data, weights_sorted.ravel()
                 )
                 # Test sampling
                 np.testing.assert_allclose(

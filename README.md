@@ -26,6 +26,10 @@ This will generate pkg files for Boost, CGAL, Eigen, and TBB (TBB already exists
 
 **Note** This path probably needs to be adjusted on windows!
 
+You must also install pkg-config from conda as pkg-config provided by the system (e.g., in /bin/) will not search this particular directory
+
+    conda install pkg-config
+
 Next, for an editable (developer) installation, use
 
     pip install --no-build-isolation --no-deps -e .

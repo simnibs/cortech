@@ -4,8 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-import nibabel as nib
-from scipy.spatial import KDTree
+import scipy.spatial
 
 import cortech.utils
 from cortech.surface import Surface, Sphere
@@ -53,42 +52,80 @@ class Hemisphere:
     def has_infra_supra_model(self):
         return self.infra_supra_model is not None
 
-    def compute_node_to_node_difference(self) -> npt.NDArray[float]:
-        """Calculate thickness at each vertex of node-matched surfaces."""
-
-        # FIXME this should be a better estimate than simple vertex-to-vertex
-        # distance?
-        return np.linalg.norm(self.pial.vertices - self.white.vertices, axis=1)
-
-    def compute_thickness(self) -> npt.NDArray[float]:
-        """This function calculates a FreeSurfer "style" thickness by finding the minimum distance between a white matter
-        node and every pial surface node, doing the same the other way around, and averaging those two minimum distances
-        for every node. It will also ensure the thickness estimate is between 0 and 5 mm.
+    def compute_thickness(self, method="vertex-to-closest") -> npt.NDArray[float]:
+        """Calculate thickness at each vertex of node-matched surfaces.
 
         Parameters
         ----------
+        method : str
+            `vertex-to-closest`. For each vertex on white (pial), find the
+            closest vertex on pial (white) and compute the average of white-to-
+            pial and pial-to-white.
+
+                d_i = 0.5 * min || V(pial)_j - V(white)_i ||
+                    + 0.5 * min || V(pial)_i - V(white)_j ||
+
+            `vertex-to-vertex`. Calculate the distance between corresponding
+            vertices on white and pial surfaces.
+
+                d_i = || V(pial)_i - V(white)_i ||
+
+        """
+        vw = self.white.vertices
+        vp = self.pial.vertices
+        match method:
+            case "vertex-to-closest":
+                p2w, _ = scipy.spatial.KDTree(vw).query(vp)
+                w2p, _ = scipy.spatial.KDTree(vp).query(vw)
+                thickness = 0.5 * p2w + 0.5 * w2p
+            case "vertex-to-vertex":
+                thickness = np.linalg.norm(vp - vw, axis=1)
+            case _:
+                raise ValueError(f"Invalid `method` {method}")
+        return np.clip(thickness, 0, 5)
+
+    def compute_freesurfer_thickness(
+        self,
+        nbhd_size: int = 7,
+        max_thick: float = 5.0,
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Calculate cortical thickness using the FreeSurfer algorithm.
+
+        Mirrors MRISmeasureCorticalThickness: two-pass BFS over the k-ring
+        topological neighborhood with a pial-normal outward-direction filter.
+
+        Parameters
+        ----------
+        nbhd_size : int
+            Number of BFS rings to search (FreeSurfer default: 7).
+        max_thick : float
+            Maximum thickness value in mm (FreeSurfer default: 5.0).
 
         Returns
         -------
-        thickness : np.array(float)
-                        The average, clipped cortical thickness estimate
+        thickness : ndarray, shape (n_vertices,)
+            Cortical thickness in mm, capped at `max_thick`.
+        directions : ndarray, shape (n_vertices, 3)
+            Unit vectors from each white vertex toward its closest pial match.
         """
+        vw = self.white.vertices
+        vp = self.pial.vertices
+        np_ = self.pial.vertex_normals()
 
-        vi = self.white.vertices
-        vo = self.pial.vertices
+        knn, _ = self.white.k_ring_neighbors(nbhd_size)
 
-        tree1 = KDTree(vi)
-        tree2 = KDTree(vo)
+        knn_sizes = np.array([len(k) for k in knn], dtype=np.int64)
+        knn_offsets = np.empty(len(knn) + 1, dtype=np.int64)
+        knn_offsets[0] = 0
+        np.cumsum(knn_sizes, out=knn_offsets[1:])
+        knn_flat = np.concatenate(knn).astype(np.int64)
 
-        # Compute the closest distance one way
-        dist1, inds1 = tree1.query(vo)
+        w2p, gw, directions = cortech.utils._compute_freesurfer_thickness(
+            vw, vp, np_, knn_flat, knn_offsets
+        )
 
-        # And the other way
-        dist2, inds2 = tree2.query(vi)
-
-        av_min_dist = (dist1 + dist2) / 2
-
-        return np.clip(av_min_dist, 0, 5)
+        thickness = np.minimum(0.5 * (w2p + gw), max_thick)
+        return thickness, directions
 
     def compute_average_curvature(
         self,
@@ -98,8 +135,8 @@ class Hemisphere:
     ):
         """Average curvature estimates of white and pial surfaces."""
         curv_kwargs = curv_kwargs or {}
-        white_curv = white_curv or self.white.compute_curvature(**curv_kwargs)
-        pial_curv = pial_curv or self.pial.compute_curvature(**curv_kwargs)
+        white_curv = white_curv or self.white.curvature(**curv_kwargs)
+        pial_curv = pial_curv or self.pial.curvature(**curv_kwargs)
         return Curvature(
             **{
                 k: 0.5 * (getattr(white_curv, k) + getattr(pial_curv, k))
@@ -114,52 +151,52 @@ class Hemisphere:
         vol_frac: float | npt.NDArray = 0.5,
     ):
         """Compute the distance fraction (between inner and outer surface whose
-                distance is `thickness`) which yields the desired volume fraction at each
-                position.
+        distance is `thickness`) which yields the desired volume fraction at
+        each position.
 
-                Parameters
-                ----------
-                curv : npt.NDArray
-                    Curvature estimate at each position.
-                thickness : npt.NDArray
-                    Thickness estimate at each position.
-                vol_frac : float | npt.NDArray
-                    The desired volume fraction(s). If a float, estimate a single
-                    distance fraction per vertex. If an ndarray with one dimension,
-                    assume that `vol_frac` gives a number of fractions to estimate for
-                    each vertex. If an ndarray with two dimensions, assume that
-                    `vol_frac` is (n_frac, n_vertices), i.e., the fraction is provided
-                    explicitly for each vertex (default = 0.5).
+        Parameters
+        ----------
+        curv : npt.NDArray
+            Curvature estimate at each position.
+        thickness : npt.NDArray
+            Thickness estimate at each position.
+        vol_frac : float | npt.NDArray
+            The desired volume fraction(s). If a float, estimate a single
+            distance fraction per vertex. If an ndarray with one dimension,
+            assume that `vol_frac` gives a number of fractions to estimate for
+            each vertex. If an ndarray with two dimensions, assume that
+            `vol_frac` is (n_frac, n_vertices), i.e., the fraction is provided
+            explicitly for each vertex (default = 0.5).
 
-                Returns
-                -------
-                dist_frac : npt.NDArray
-                    Position-wise distance fraction which yields the desired volume
-                    fraction.
+        Returns
+        -------
+        dist_frac : npt.NDArray
+            Position-wise distance fraction which yields the desired volume
+            fraction.
 
-                Notes
-                -----
-                We expect positive curvature in sulci and negative curvature on gyral
-                crowns.
-        white
-                On gyral crowns, the curvature is negative because the surface bends away
-                from the normals. Since a radius must be positive, we ignore the sign when
-                computing the radius of the sphere which gives the desired volume fraction.
+        Notes
+        -----
+        We expect positive curvature in sulci and negative curvature on gyral
+        crowns.
 
-                In the sulci, the curvature is positive as the surface bends towards the
-                normal. However, we are still placing the center of the sphere on the side
-                of the white matter (there is nothing to distinguish concave and convex
-                when we ignore the sign of the curvature). Assuming the sphere was placed
-                on the pial side, we could find the desired volume fraction by first
-                estimating the radius of the sphere at 1-frac (since 1-vol_frac from the
-                outer side is vol_frac from the inner side) and then subtract this
-                (relative to the inner radius) from the thickness to get a distance from
-                the inner surface rather than the outer.
+        On gyral crowns, the curvature is negative because the surface bends away
+        from the normals. Since a radius must be positive, we ignore the sign when
+        computing the radius of the sphere which gives the desired volume fraction.
 
-                References
-                ----------
-                Michiel Kleinnijenhuis et al. (2015). Diffusion tensor characteristics of
-                    gyrencephaly using high resolution diffusion MRI in vivo at 7T.
+        In the sulci, the curvature is positive as the surface bends towards the
+        normal. However, we are still placing the center of the sphere on the side
+        of the white matter (there is nothing to distinguish concave and convex
+        when we ignore the sign of the curvature). Assuming the sphere was placed
+        on the pial side, we could find the desired volume fraction by first
+        estimating the radius of the sphere at 1-frac (since 1-vol_frac from the
+        outer side is vol_frac from the inner side) and then subtract this
+        (relative to the inner radius) from the thickness to get a distance from
+        the inner surface rather than the outer.
+
+        References
+        ----------
+        Michiel Kleinnijenhuis et al. (2015). Diffusion tensor characteristics of
+            gyrencephaly using high resolution diffusion MRI in vivo at 7T.
         """
         frac = np.atleast_1d(vol_frac)
 
@@ -501,6 +538,101 @@ class Hemisphere:
             )
         if self.inf is not None:
             self.inf.save((out_dir / f"{self.name}.{inf}").with_suffix(ext))
+
+
+    def compute_surface_gradients(self, data: npt.NDArray[float], surface_name="white", neighborhood_size=1) -> None:
+
+        """Fit a plane to each node (and its neighbors) to approximate the first order gradients.
+        Basically for each node we are solving:
+
+        |x1 - x0, y1 - y0, z1 - z0, 1|   |grad_x(f)_(x0,y0,z0)|    |f(x1, y1, z1)|
+        |x2 - x0. y1 - y0, z1 - z0, 1|   |grad_y(f)_(x0,y0,z0)|    |f(x2, y2, z1)|
+        |   .        .        .     .| * |grad_z(f)_(x0,y0,z0)|  = |     .       |
+        |   .        .        .     .|   |f(x0, y0, z0)       |    |     .       |
+        |xn - x0, yn - y0, zn - z0, 1|                             |f(xn, yn, zn)|
+
+        Obviously using the MRI world coordinate system is maybe not the best for this
+        because we presumably would like to have these gradients along the surface.
+        A more natural coordinate system for the cortex is perhaps the one spanned
+        by the principal curvature directions. Once we have those we just project
+        the coordinates on the left hand side to that coordinate system and solve.
+
+        Parameters
+        ----------
+        surf: Hemisphere
+                    A hemisphere object storing the surfaces
+        data: np.array(float)
+                    Some data that lives on the nodes of the
+                    surface of which gradient we are interested in.
+            neighborhood_size: int
+                    Size of the neighborhood over which the gradient is computed.
+        Returns:
+        coeffs: np.array(float)
+                    A nodes x 3 array that stores the first order
+                    gradient of the data projected to the principal
+                    curvature directions along with the bias or
+                    constant term.
+        """
+
+        # Get the principal curvature directions
+        surf_tmp = getattr(self, surface_name)
+        _, E = surf_tmp.compute_principal_curvatures()
+
+        # The unknowns (3x1), two gradients and the bias
+        num_params = 2
+        coeffs = np.zeros((surf_tmp.n_vertices, num_params))
+
+        # number of neighbors
+        knn, kr = surf_tmp.k_ring_neighbors(neighborhood_size)
+        m = np.array([x.size for x in knn])
+        muq = np.unique(m)
+
+
+        # Loop over the nodes with the same amount of neighbors
+        # This way we can solve all the linear systems with the
+        # same size at the same time.
+        for mm in muq:
+            i = np.where(m == mm)[0]
+
+            # Get the neighbor indices
+            nid = np.array([knn[j][kr[j,1]:kr[j,2]] for j in i])
+
+            # Get the coordinates of the neighbors in MRI space
+            coords_neighbors = surf_tmp.vertices[nid, ...]
+            coords_neighbors = np.moveaxis(coords_neighbors, 0, 1)
+
+            # Get the coordinates of the center nodes
+            coords_centers = surf_tmp.vertices[i, ...]
+
+            # Compute the difference
+            coord_difference = coords_neighbors - coords_centers
+
+            # Get the principal curvature directions, at the center
+            E_tmp = E[i, ...].swapaxes(0,1)
+
+            # Project the coordinates to curvature directions
+            projected = np.einsum('ijk,ljk->ilj',E_tmp,coord_difference)
+
+            # Massage this to the correct form (nodes x ngbrs x coeffs)
+            projected = projected.swapaxes(0,-1)
+
+            # Do the linear fit node-wise
+            U, S, Vt = np.linalg.svd(projected, full_matrices=False)
+
+            # Get the target values at the nodes we are dealing with
+            neighbor_data = data[nid, ...].swapaxes(0,1)
+            center_node_data = data[i, ...]
+            data_difference = neighbor_data - center_node_data
+            data_difference = data_difference.swapaxes(0,1)
+
+            betas_tmp = np.squeeze(
+                Vt.swapaxes(1, 2)
+                @ (U.swapaxes(1, 2) @ data_difference[..., None] / S[..., None])
+            )
+
+            coeffs[i, :] = betas_tmp
+
+        return coeffs
 
     @classmethod
     def from_freesurfer_subject_dir(
