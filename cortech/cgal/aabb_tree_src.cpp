@@ -7,20 +7,23 @@
 
 #include <cgal_helpers.h>
 
+using std::vector;
+
 using KS = CGAL::Simple_cartesian<double>;
 
 using Point = KS::Point_3;
 using Triangle = KS::Triangle_3;
-using Iterator = std::vector<Triangle>::iterator;
+using Tetrahedron = KS::Tetrahedron_3;
+using Iterator = vector<Triangle>::iterator;
 using Primitive = CGAL::AABB_triangle_primitive_3<KS, Iterator>;
 using Tree = CGAL::AABB_tree<CGAL::AABB_traits_3<KS, Primitive>>;
 using Point_and_primitive_id = Tree::Point_and_primitive_id;
 
-std::vector<double> aabb_distance(
-    CGAL_t::vecvec<double> vertices,
-    CGAL_t::vecvec<int> faces,
-    CGAL_t::vecvec<double> query_points,
-    CGAL_t::vecvec<double> query_hints,
+vector<double> aabb_distance(
+    vector<vector<double>> vertices,
+    vector<vector<int>> faces,
+    vector<vector<double>> query_points,
+    vector<vector<double>> query_hints,
     bool accelerate_distance_queries = true)
 {
     int n_vertices = vertices.size();
@@ -44,10 +47,10 @@ std::vector<double> aabb_distance(
         throw std::invalid_argument("`query_hints` should either be empty or contain one hint per query point.");
     }
 
-    std::vector<Point> vp(n_vertices);
-    std::vector<Point> qp(n_qp);
-    std::vector<Triangle> triangles(n_faces);
-    std::vector<double> distance(n_qp);
+    vector<Point> vp(n_vertices);
+    vector<Point> qp(n_qp);
+    vector<Triangle> triangles(n_faces);
+    vector<double> distance(n_qp);
 
     // build vertices as Points
     for (int i = 0; i < n_vertices; i++)
@@ -101,20 +104,20 @@ std::vector<double> aabb_distance(
     return distance;
 }
 
-// std::tuple<std::vector<int>, std::vector<int>, CGAL_t::vecvec<float>> aabb_all_segment_intersections(
-//     CGAL_t::vecvec<float> vertices,
-//     CGAL_t::vecvec<int> faces,
-//     CGAL_t::vecvec<float> segment_start,
-//     CGAL_t::vecvec<float> segment_end
+// std::tuple<vector<int>, vector<int>, vector<vector<float>>> aabb_all_segment_intersections(
+//     vector<vector<float>> vertices,
+//     vector<vector<int>> faces,
+//     vector<vector<float>> segment_start,
+//     vector<vector<float>> segment_end
 // ){
 
 //     int n_segments = segment_start.size()
-//     std::vector<float> intersect_point(3);
+//     vector<float> intersect_point(3);
 
 //     // output
-//     std::vector<int> intersection_ind;   // segment index of intersection
-//     std::vector<int> intersection_prim;  // primitive (face) index of intersection
-//     CGAL_t::vecvec<float> intersection_pos; // position of intersection
+//     vector<int> intersection_ind;   // segment index of intersection
+//     vector<int> intersection_prim;  // primitive (face) index of intersection
+//     vector<vector<float>> intersection_pos; // position of intersection
 
 //     for (int i = 0; i < n_segments; i++){
 //         a = Point(segment_start[i][0], segment_start[i][1], segment_start[i][2])
@@ -160,12 +163,12 @@ std::vector<double> aabb_distance(
 //     return std::make_tuple(intersection_ind, intersection_prim, intersection_pos);
 // }
 
-// std::pair<CGAL_t::vecvec<double>,std::vector<int>> aabb_closest_point_and_primitive(
-//     CGAL_t::vecvec<double> vertices,
-//     CGAL_t::vecvec<int> faces,
-//     CGAL_t::vecvec<double> query_points,
-//     CGAL_t::vecvec<double> query_hints_point,
-//     // CGAL_t::vecvec<int> query_hints_primitive,
+// std::pair<vector<vector<double>>,vector<int>> aabb_closest_point_and_primitive(
+//     vector<vector<double>> vertices,
+//     vector<vector<int>> faces,
+//     vector<vector<double>> query_points,
+//     vector<vector<double>> query_hints_point,
+//     // vector<vector<int>> query_hints_primitive,
 //     bool accelerate_distance_queries = true
 // ){
 //     int n_vertices = vertices.size();
@@ -186,16 +189,16 @@ std::vector<double> aabb_distance(
 //         throw std::invalid_argument("`query_hints_point` should either be empty or contain one hint per query point.");
 //     }
 
-//     std::vector<Point> vp(n_vertices);
-//     std::vector<Point> qp(n_qp);
-//     std::vector<Triangle> triangles(n_faces);
-//     CGAL_t::vecvec<double> closest_point(n_qp);
-//     std::vector<int> closest_primitive(n_qp);
+//     vector<Point> vp(n_vertices);
+//     vector<Point> qp(n_qp);
+//     vector<Triangle> triangles(n_faces);
+//     vector<vector<double>> closest_point(n_qp);
+//     vector<int> closest_primitive(n_qp);
 
 //     // CGAL::Real_timer timer;
 //     // timer.start();
 
-//     Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+//     Surface_mesh mesh = cortech::build(vertices, faces);
 
 //     // build vertices as Points
 //     // for (int i = 0; i < n_vertices; i++)

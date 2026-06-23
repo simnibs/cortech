@@ -1,5 +1,6 @@
 import itertools
 from pathlib import Path
+import warnings
 
 import nibabel as nib
 import numpy as np
@@ -10,6 +11,7 @@ from scipy.spatial import cKDTree
 
 import cortech.freesurfer
 import cortech.utils
+import cortech.cgal.alpha_wrap_3
 import cortech.cgal.polygon_mesh_processing as pmp
 import cortech.cgal.surface_mesh_simplification as sms
 import cortech.cgal.convex_hull_3
@@ -63,31 +65,15 @@ from cortech.constants import Curvature
 # class Faces:
 
 
-class Surface:
+class TriangleSoup:
     def __init__(
         self,
         vertices: npt.NDArray,
         faces: npt.NDArray,
-        space: str = "scanner",
-        geometry: dict | cortech.freesurfer.VolumeGeometry | None | str = "default",
         edge_pairs: npt.NDArray | None = None,
-    ) -> None:
-        """Class for representing a triangulated surface."""
+    ):
         self.vertices = vertices
         self.faces = faces
-        assert space in {"scanner", "surface"}
-        self.space = space
-
-        if isinstance(geometry, dict):
-            self.geometry = cortech.freesurfer.VolumeGeometry(**geometry)
-        elif isinstance(geometry, cortech.freesurfer.VolumeGeometry):
-            self.geometry = geometry
-        elif geometry is None:
-            self.geometry = cortech.freesurfer.VolumeGeometry(False)
-        elif geometry == "default":
-            self.geometry = cortech.freesurfer.VolumeGeometry.with_defaults()
-        else:
-            raise ValueError("Invalid geometry")
 
         self.edge_pairs = (
             np.array([[1, 2], [2, 0], [0, 1]], dtype=self.faces.dtype)
@@ -95,18 +81,13 @@ class Surface:
             else edge_pairs
         )
 
-    def is_valid(self):
-        # and check that n_faces and n_vertices match for whatever number of vertices per face....
-        # only valid for triangulated surfaces
-        return self.n_faces == self.n_vertices * 2 - 4
-
     @property
     def faces(self):
         return self._faces
 
     @faces.setter
     def faces(self, value):
-        value = np.atleast_2d(value)
+        value = np.atleast_2d(value).astype(int)
         assert value.ndim == 2
         self._faces = value
         self.n_faces, self.vertices_per_face = value.shape
@@ -122,42 +103,78 @@ class Surface:
         self._vertices = value
         self.n_vertices, self.n_dim = value.shape
 
-    def as_mesh(self):
-        return self.vertices[self.faces]
+    def reverse_face_orientation(self):
+        self.faces = self.faces[:, ::-1]
+        # Ensure subdivide_faces is still valid
+        # self.faces_to_edges = self.faces_to_edges[:, ::-1]
 
-    def new_from(self, vertices, faces: npt.NDArray | None = None):
-        """Return a new Surface object based on self but with `vertices` instead."""
-        faces = self.faces if faces is None else faces
-        return Surface(vertices, faces, self.space, self.geometry, self.edge_pairs)
+    def as_mesh(self, subset=None):
+        f = self.faces if subset is None else self.faces[subset]
+        return self.vertices[f]
 
     def bounding_box(self):
         return np.stack((self.vertices.min(0), self.vertices.max(0)))
 
-    def compute_vertex_adjacency(self, include_self: bool = False):
-        """Make sparse adjacency matrix for vertices with connections `tris`."""
-        pairs = list(itertools.combinations(np.arange(self.faces.shape[1]), 2))
-        row_ind = np.concatenate([self.faces[:, i] for p in pairs for i in p])
-        col_ind = np.concatenate([self.faces[:, i] for p in pairs for i in p[::-1]])
+    def circumsphere(self, indices=None, return_radius: bool = True):
+        """Implements the following formulae from [1]
 
-        data = np.ones_like(row_ind)
-        A = scipy.sparse.csr_array(
-            (data / 2, (row_ind, col_ind)), shape=(self.n_vertices, self.n_vertices)
+                |                                                           |
+                | |c-a|^2 [(b-a)x(c-a)]x(b-a) + |b-a|^2 (c-a)x[(b-a)x(c-a)] |
+                |                                                           |
+            r = -------------------------------------------------------------
+                                    2 | (b-a)x(c-a) |^2
+
+                    |c-a|^2 [(b-a)x(c-a)]x(b-a) + |b-a|^2 (c-a)x[(b-a)x(c-a)]
+            c = a + ---------------------------------------------------------
+                                    2 | (b-a)x(c-a) |^2
+
+        Returns
+        -------
+        center
+            Center of the circumsphere.
+        radius
+            Radius of the circumsphere.
+
+        References
+        ----------
+        [1] https://ics.uci.edu/~eppstein/junkyard/circumcenter.html
+        """
+        m = self.as_mesh()
+        if indices is None:
+            indices = slice(None, None)
+        a = m[indices, 0]
+        ba = m[indices, 1] - a
+        ca = m[indices, 2] - a
+
+        ba_ca = np.linalg.cross(ba, ca)
+        num1 = np.vecdot(ca, ca, keepdims=True) * np.linalg.cross(ba_ca, ba)
+        num2 = np.vecdot(ba, ba, keepdims=True) * np.linalg.cross(ca, ba_ca)
+        num = num1 + num2
+        denom = 2 * np.vecdot(ba_ca, ba_ca, keepdims=True)
+
+        center = a + (num1 + num2) / denom
+        if return_radius:
+            radius = np.linalg.norm(num, axis=-1) / denom.squeeze()
+
+        return (center, radius) if return_radius else center
+
+    def convex_hull(self):
+        v, f = cortech.cgal.convex_hull_3.convex_hull(self.vertices)
+        return self.new_from(v, f)
+
+    def copy(self):
+        return self.new_from(self.vertices.copy())
+
+    def distance(self, other: "Surface", accelerate: bool | str = "barycenter"):
+        return self.distance_query(other.vertices, accelerate)
+
+    def duplicate_non_manifold_edges(self):
+        v, f = pmp.duplicate_non_manifold_edges_in_polygon_soup(
+            self.vertices, self.faces
         )
+        return self.new_from(v, f)
 
-        if include_self:
-            A = A.tolil()
-            A.setdiag(1)
-            A = A.tocsr()
-
-        A.sum_duplicates()  # ensure canocical format
-
-        return A
-
-    def compute_edges(
-        self,
-        sort_dim0: bool = False,
-        sort_dim1: bool = False,
-    ):
+    def edges(self, sort_dim0: bool = False, sort_dim1: bool = False):
         edges = np.stack(
             [
                 self.faces[:, self.edge_pairs[:, 0]],
@@ -196,58 +213,24 @@ class Surface:
 
     #     faces_to_edges = idx.reshape(self.n_faces, 3)
 
-    def compute_edge_norm(self):  # , unique: bool = False
+    def edges_norm(self, edges: npt.NDArray | None = None):  # , unique: bool = False
         """ """
-        edges = self.vertices[self.compute_edges()]  # (n_edges, 2, 3)
+        # (n_edges, 2, 3)
+        edges = self.vertices[self.edges() if edges is None else edges]
         edges = edges.reshape(self.n_faces, 3, 2, 3)
         return np.linalg.norm(np.diff(edges, axis=2).squeeze(), axis=2)
 
-    def compute_face_adjacency(self, include_self: bool = False):
-        edges = self.compute_edges(sort_dim1=True)  # e.g., (1,0) and (0,1) -> (0,1)
-
-        # Now sort the vertex-vertex edges
-        # first column has 1st priority
-        a0 = edges[:, 0].argsort()
-        s0 = edges[a0]
-        # second column has 2nd priority (actually, we just want to sub-sort `s0`)
-        a1 = s0[:, 1].argsort()
-        s1 = s0[a1]
-        # "stable" keeps order of like items, hence both columns will be
-        # sorted after this operation
-        a2 = np.argsort(s1[:, 0], kind="stable")  # .argsort(stable=True)
-        # s2 = s1[a2] # the sorted edges
-
-        faces_enum = np.broadcast_to(
-            np.arange(self.n_faces)[:, None], self.faces.shape
-        ).ravel()
-        face_adjacency = faces_enum[a0[a1[a2]]].reshape(-1, 2)
-
-        data = np.ones(face_adjacency.size)
-        A = scipy.sparse.csr_array(
-            (data, (face_adjacency.ravel(), face_adjacency[:, ::-1].ravel())),
-            shape=(self.n_faces, self.n_faces),
-        )
-
-        if include_self:
-            A = A.tolil()
-            A.setdiag(1)
-            A = A.tocsr()
-
-        A.sum_duplicates()  # ensure canonical format
-
-        return A
-
-    def compute_face_barycenters(self):
+    def face_barycenters(self):
         return self.as_mesh().mean(1)
 
-    def _compute_unnormalized_face_normals(self):
+    def face_areas(self):
+        return 0.5 * np.linalg.norm(self._face_normals_unnormalized(), axis=1)
+
+    def _face_normals_unnormalized(self):
         m = self.as_mesh()
         return np.cross(m[:, 1, :] - m[:, 0, :], m[:, 2, :] - m[:, 0, :]).astype(float)
 
-    def compute_face_areas(self):
-        return 0.5 * np.linalg.norm(self._compute_unnormalized_face_normals(), axis=1)
-
-    def compute_face_normals(self):
+    def face_normals(self):
         """Get normal vectors for each triangle in the mesh.
 
         PARAMETERS
@@ -261,13 +244,254 @@ class Surface:
         tnormals : ndarray
             Normal vectors of each triangle in "mesh".
         """
-        tnormals = self._compute_unnormalized_face_normals()
+        tnormals = self._face_normals_unnormalized()
         tnormals /= np.linalg.norm(tnormals, axis=1, keepdims=True)
         return tnormals
 
-    def compute_vertex_normals(self):
+    @classmethod
+    def from_file(cls, filename: Path | str, **kwargs):
+        filename = Path(filename)
+
+        match filename.suffix:
+            case ".gii":
+                return cls.from_gifti(filename, **kwargs)
+            case ".obj" | ".stl" | ".vtk" | ".vtp":
+                return cls.from_vtk(filename, **kwargs)
+            case _:
+                # if it doesn't match any of the above extensions, assume
+                # FreeSurfer format
+                return cls.from_freesurfer(filename, **kwargs)
+
+    @classmethod
+    def from_vtk(cls, filename: Path | str, **kwargs):
+        """
+
+        Parameters
+        ----------
+        filename : Path | str
+            File to read.
+
+        Returns
+        -------
+        Surface :
+            Instance of self.
+        """
+        import pyvista as pv
+
+        m = pv.read(filename)
+        faces = m.cells if m.faces is None else m.faces
+        return cls(m.points, faces.reshape(-1, 4)[:, 1:], **kwargs)
+
+    def intersections_with(
+        self, other, return_unique: bool = False
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Compute intersecting pairs of triangles between self and other.
+
+        Parameters
+        ----------
+        other : cortech.Surface
+        return_unique : bool
+            Return unique indices of intersecting faces for self and other.
+
+        Returns
+        -------
+        intersect_pairs: tuple[npt.NDArray, npt.NDArray]
+            Tuple of length two. `intersect_pairs[0]` contains the intersecting
+            faces of self, `intersect_pairs[1]` contains the intersecting
+            faces of other.
+            If `return_unique = False`, then
+            `len(intersect_pairs[0]) == intersect_pairs[1]` and each position
+            correspond to a pair of intersecting faces.
+            If `return_unique = True`, then each array corresponds to the
+            *unique* intersecting faces of each surface.
+
+        Notes
+        -----
+        CGAL/Polygon_mesh_processing/intersection.h
+        PMP::internal::compute_face_face_intersection
+        """
+        intersect_pairs = pmp.intersecting_meshes(
+            self.vertices, self.faces, other.vertices, other.faces
+        ).T
+        if intersect_pairs.size == 0:
+            return np.array([], dtype=int), np.array([], dtype=int)
+        else:
+            if return_unique:
+                return np.unique(intersect_pairs[0]), np.unique(intersect_pairs[1])
+            else:
+                return intersect_pairs[0], intersect_pairs[1]
+
+    def merge_duplicate_points(self):
+        return self.new_from(
+            *pmp.merge_duplicate_points_in_polygon_soup(self.vertices, self.faces)
+        )
+
+    def new_from(self, vertices, faces: npt.NDArray | None = None):
+        """Return a new Surface object based on self but with `vertices` instead."""
+        faces = self.faces.copy() if faces is None else faces
+        return self.__class__(vertices, faces, self.edge_pairs)
+
+    def prune(self, inplace: bool = False):
+        """Remove unused vertices and reindex faces."""
+        vertices_used = np.unique(self.faces)
+        reindexer = np.zeros(self.n_vertices, dtype=self.faces.dtype)
+        reindexer[vertices_used] = np.arange(vertices_used.size, dtype=self.faces.dtype)
+
+        v = self.vertices[vertices_used]
+        f = reindexer[self.faces]
+
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
+
+    def remove_faces(self, faces: npt.ArrayLike, inplace: bool = False):
+        """Remove the specified faces. The surface will be pruned afterwards,
+        removing any unused vertices.
+
+        Parameters
+        ----------
+        faces
+            Indices of the faces to remove.
+        """
+        faces = np.asarray(faces)
+        if faces.dtype == bool:
+            assert len(faces) == self.n_faces
+            faces = np.flatnonzero(faces)
+        keep_faces = np.delete(self.faces, faces, axis=0)
+        if inplace:
+            self.faces = keep_faces
+            self.prune(inplace)
+        else:
+            new = self.new_from(self.vertices, keep_faces)
+            return new.prune(inplace)
+
+    def remove_vertices(self, vertices: npt.NDArray, inplace: bool = False):
+        """Remove the specified vertices along with any faces that reference
+        these vertices.
+
+        Paramters
+        ---------
+        vertices :
+            Array of indices or boolean mask indicating the vertices to remove.
+
+        Returns
+        -------
+
+        """
+        if vertices.dtype == bool:
+            assert len(vertices) == self.n_vertices
+            invalid_vertices = vertices[self.faces]
+        else:
+            invalid_vertices = np.isin(self.faces, vertices)
+        faces_to_remove = invalid_vertices.any(1)
+        return self.remove_faces(faces_to_remove, inplace)
+
+    def save_off(self, filename):
+        """Writes mesh surfaces as an .off file
+
+        Parameters
+        -----------
+        msh: Mesh
+            Mesh object
+        fn: str
+            Name of file
+        """
+        with open(filename, "wb") as f:
+            f.write("OFF\n".encode())
+            f.write("# File created by CORTECH \n\n".encode())
+            np.savetxt(
+                f, np.array([self.n_vertices, self.n_faces, 0])[None, :], fmt="%u"
+            )
+            np.savetxt(f, self.vertices, fmt="%0.6f")
+            np.savetxt(
+                f,
+                np.concatenate(
+                    (np.repeat(self.faces.shape[1], self.n_faces)[:, None], self.faces),
+                    axis=1,
+                ).astype(np.uint),
+                fmt="%u",
+            )
+
+
+class Surface(TriangleSoup):
+    def __init__(
+        self,
+        vertices: npt.NDArray,
+        faces: npt.NDArray,
+        space: str = "scanner",
+        geometry: dict | cortech.freesurfer.VolumeGeometry | None | str = "default",
+        edge_pairs: npt.NDArray | None = None,
+        check_topology: bool = True,
+    ) -> None:
+        """Class for representing a triangulated manifold surface. The surface
+        is required to be manifold, e.g., an edge belongs to either one
+        (boundary) or two (internal) triangles.
+
+        Validity check of the triangulation is implemented using
+
+            CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh
+
+        From the description of this function
+
+            It checks that each edge has at most two incident faces and such an
+            edge is visited in opposite direction along the two face
+            boundaries, no polygon has twice the same vertex, and the polygon
+            soup describes a manifold surface.
+
+        The check is purely topological.
+
+        """
+        if check_topology:
+            assert pmp.is_polygon_soup_a_polygon_mesh(faces), (
+                "Triangulation does not define a valid surface mesh."
+            )
+        super().__init__(vertices, faces, edge_pairs)
+
+        assert space in {"scanner", "surface"}
+        self.space = space
+
+        if isinstance(geometry, dict):
+            self.geometry = cortech.freesurfer.VolumeGeometry(**geometry)
+        elif isinstance(geometry, cortech.freesurfer.VolumeGeometry):
+            self.geometry = geometry
+        elif geometry is None:
+            self.geometry = cortech.freesurfer.VolumeGeometry(False)
+        elif geometry == "default":
+            self.geometry = cortech.freesurfer.VolumeGeometry.with_defaults()
+        else:
+            raise ValueError("Invalid geometry")
+
+    # def is_valid(self):
+    #     return self.n_faces == self.n_vertices * 2 - 4
+
+    def integrate_on_vertices(self, indices, values):
+        if values.ndim == 1:
+            return np.bincount(indices, values, self.n_vertices)
+        elif values.ndim == 2:
+            return np.stack(
+                [
+                    np.bincount(indices, values[:, i], self.n_vertices)
+                    for i in range(values.shape[1])
+                ],
+                axis=1,
+            )
+        else:
+            raise ValueError(
+                f"Only 1 or 2 dimensional value arrays supported (got shape {values.shape})"
+            )
+
+    def euler_characteristic(self):
+        n_edges = len(self.edges()) // 2  # unique edges
+        return self.n_vertices - n_edges + self.n_faces
+
+    def genus(self):
+        return 1 - self.euler_characteristic() // 2
+
+    def vertex_normals(self):
         """ """
-        face_normals = self.compute_face_normals()
+        face_normals = self.face_normals()
 
         out = np.stack(
             [
@@ -283,7 +507,7 @@ class Surface:
 
         return out / np.linalg.norm(out, ord=2, axis=1, keepdims=True)
 
-    def compute_triangle_quality(self):
+    def triangle_quality(self):
         """The 'volume-length' quality metric for a triangle is defined as
 
             Q = 4*sqrt(3) * Area / sum(EdgeLengths**2)
@@ -297,18 +521,30 @@ class Surface:
             https://people.eecs.berkeley.edu/~jrs/papers/elemj.pdf
         """
         a = 6.928203230275509  # 4 * sqrt(3.0)
-        A = self.compute_face_areas()
-        E = self.compute_edge_norm()
+        A = self.face_areas()
+        E = self.edges_norm()
         return a * A / np.sum(E**2, 1)  # 0=worst, 1=best
 
-    def compute_interpolated_corrected_curvatures(self):
+    def interpolated_corrected_curvatures(self):
         """Compute curvature information using CGAL."""
         k1, k2, H, K, k1_vec, k2_vec = pmp.interpolated_corrected_curvatures(
             self.vertices, self.faces
         )
         return Curvature(k1=k1, k2=k2, H=H, K=K)
 
-    def compute_principal_curvatures(self):
+    def tangent_plane_vectors(self) -> npt.NDArray:
+        """Compute vectors spanning the tangent plane of a vertex, i.e., the
+        plane to which the vertex normal is orthogonal. The returned tangent
+        vectors are orthogonal but their directions are arbitrary.
+
+        Returns
+        -------
+        tangent vectors : npt
+            Array of size (self.n_vertices, 2, 3).
+        """
+        return cortech.utils.compute_tangent_vectors(self.vertex_normals())
+
+    def principal_curvatures(self):
         """Compute principal curvatures and corresponding directions. From these,
         the following curvature estimates can easily be calculated
 
@@ -343,8 +579,8 @@ class Surface:
         `MRIScomputeSecondFundamentalForm`.
         """
         n = self.n_vertices
-        adj = self.compute_vertex_adjacency()
-        vn = self.compute_vertex_normals()
+        adj = self.adjacency_matrix()
+        vn = self.vertex_normals()
         vt = cortech.utils.compute_tangent_vectors(vn)
 
         m = np.array(adj.sum(1)).squeeze().astype(int)  # number of neighbors
@@ -439,9 +675,7 @@ class Surface:
 
         return H_uv.squeeze()
 
-    def compute_curvature(
-        self, percentile_clip_range=(0.1, 99.9), smooth_iter: int = 0
-    ):
+    def curvature(self, percentile_clip_range=(0.1, 99.9), smooth_iter: int = 0):
         """Compute principal, mean, and Guassian curvature.
 
         Parameters
@@ -457,7 +691,7 @@ class Surface:
             H     : mean curvature
             K     : Gaussian curvature
         """
-        D, _ = self.compute_principal_curvatures()
+        D, _ = self.principal_curvatures()
 
         if percentile_clip_range is not None:
             clip_range = np.percentile(D, percentile_clip_range, axis=0)
@@ -470,7 +704,7 @@ class Surface:
 
         if smooth_iter > 0:
             k1, k2, H, K = np.ascontiguousarray(
-                self.smooth_gaussian(
+                self.smooth_laplacian(
                     np.stack((k1, k2, H, K), axis=1), n_iter=smooth_iter
                 ).T
             )
@@ -532,10 +766,10 @@ class Surface:
 
         match which:
             case "vertices":
-                adj = self.compute_vertex_adjacency() if adj is None else adj
+                adj = self.adjacency_matrix() if adj is None else adj
                 n = self.n_vertices
             case "faces":
-                adj = self.compute_face_adjacency() if adj is None else adj
+                adj = self.adjacency_matrix("face") if adj is None else adj
                 n = self.n_faces
             case _:
                 raise ValueError
@@ -548,9 +782,8 @@ class Surface:
 
         return knn, kr
 
-    @staticmethod
     def apply_affine(
-        vertices: npt.NDArray, affine: npt.NDArray, move: bool = True
+        self, affine: npt.NDArray, move: bool = True, inplace=False
     ) -> npt.NDArray:
         """Apply an affine to an array of points.
 
@@ -570,12 +803,16 @@ class Surface:
         """
 
         # apply rotation & scale
-        out_coords = np.dot(vertices, affine[:3, :3].T)
+        out_coords = np.dot(self.vertices, affine[:3, :3].T)
         # apply translation
         if move:
             out_coords += affine[:3, 3]
 
-        return out_coords
+        if inplace:
+            self.vertices = out_coords
+            return self
+        else:
+            return self.new_from(out_coords)
 
     def interpolate_to_nodes(
         self, vol: npt.NDArray, affine: npt.NDArray, order: int = 3
@@ -639,7 +876,7 @@ class Surface:
             "barycenter",
         }
         if accelerate == "barycenter":
-            barycenters = self.compute_face_barycenters()
+            barycenters = self.face_barycenters()
             tree = cKDTree(barycenters)
             _, index = tree.query(query_points)
             query_hints = barycenters[index]
@@ -650,14 +887,28 @@ class Surface:
             self.vertices, self.faces, query_points, query_hints, accelerate
         )
 
-    def distance(self, other: "Surface", accelerate: bool | str = "barycenter"):
-        return self.distance_query(other.vertices, accelerate)
+    def split(self, other):
+        """Split the surface with another surface.
 
-    def convex_hull(self):
-        v, f = cortech.cgal.convex_hull_3.convex_hull(self.vertices)
-        return self.new_from(v, f)
+        Parameters
+        ----------
+        inplace : bool, optional
+            Modify the surface in place(default = False).
+        Returns
+        -------
+        _type_
+            Tuple of split versions of self and other.
 
-    def split(self, p, d, inplace: bool = False):
+        Notes
+        -----
+        CGAL::Polygon_mesh_processing::split
+        """
+        split_self, split_other = pmp.split_with_surface(
+            self.vertices, self.faces, other.vertices, other.faces
+        )
+        return self.new_from(*split_self), other.new_from(*split_other)
+
+    def split_with_plane(self, p, d, inplace: bool = False):
         """Split the surface at a plane defined by a point `p` and a direction
         `d`.
 
@@ -676,9 +927,9 @@ class Surface:
 
         Notes
         -----
-        CGAL::Polygon_mesh_processing::clip
+        CGAL::Polygon_mesh_processing::split
         """
-        v, f = pmp.split(self.vertices, self.faces, p, d)
+        v, f = pmp.split_with_plane(self.vertices, self.faces, p, d)
         if inplace:
             self.vertices = v
             self.faces = f
@@ -826,11 +1077,71 @@ class Surface:
             else:
                 return intersect_pairs[0], intersect_pairs[1]
 
-    def isotropic_remeshing(
-        self, target_edge_length: float, n_iter: int = 1, inplace: bool = False
+    def adaptive_remeshing(
+        self,
+        error_tol: float,
+        edge_length_min: float,
+        edge_length_max: float,
+        n_iter: int = 1,
+        protect_constraints: bool = False,
+        faces_is_selected: npt.ArrayLike | None = None,
+        edges_is_constrained: npt.ArrayLike | None = None,
+        relative: bool = False,
+        inplace: bool = False,
     ):
-        v, f = pmp.isotropic_remeshing(
-            self.vertices, self.faces, target_edge_length, n_iter
+        """_summary_
+
+        Parameters
+        ----------
+        error_tol : float
+            _description_
+        edge_length_min : float
+            _description_
+        edge_length_max : float
+            _description_
+        n_iter : int, optional
+            _description_, by default 1
+        protect_constraints : bool, optional
+            If true, the edges set as constrained in edges_is_constrained
+            (or by default the boundary edges) are neither split nor collapsed
+            during remeshing.
+        faces_is_selected : npt.ArrayLike | None, optional
+            Remesh only a subset of the faces in `self`.
+        edges_is_constrained: npt.ArrayLike | None = None
+            Do not remesh these edges.
+            * A constrained edge can be split or collapsed, but not flipped,
+                nor its endpoints moved by smoothing.
+            * Sub-edges generated by splitting are set to be constrained.
+            * Patch boundary edges (i.e. incident to only one face in the
+                range) are always considered as constrained edges.
+        relative : bool, optional
+            If true, `error_tol`, `edge_length_min` and `edge_length_max` are
+            considered as a factors with which to scale the mean edge length of
+            the current surface rather than an absolute values.
+        inplace : bool, optional
+            _description_, by default False
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+        if relative:
+            edge_norm_mean = self.edges_norm().mean()
+            error_tol = error_tol * edge_norm_mean
+            edge_length_min = edge_length_min * edge_norm_mean
+            edge_length_max = edge_length_max * edge_norm_mean
+
+        v, f = pmp.adaptive_remeshing(
+            self.vertices,
+            self.faces,
+            error_tol,
+            edge_length_min,
+            edge_length_max,
+            n_iter,
+            protect_constraints,
+            faces_is_selected,
+            edges_is_constrained,
         )
         if inplace:
             self.vertices = v
@@ -838,11 +1149,123 @@ class Surface:
         else:
             return self.new_from(v, f)
 
+    def isotropic_remeshing(
+        self,
+        target_edge_length: float,
+        n_iter: int = 1,
+        protect_constraints: bool = False,
+        faces_is_selected: npt.ArrayLike | None = None,
+        edges_is_constrained: npt.ArrayLike | None = None,
+        relative: bool = False,
+        inplace: bool = False,
+    ):
+        """_summary_
+
+        Parameters
+        ----------
+        target_edge_length : float
+            _description_
+        n_iter : int, optional
+            _description_, by default 1
+        protect_constraints : bool, optional
+            If true, the edges set as constrained in edges_is_constrained
+            (or by default the boundary edges) are neither split nor collapsed
+            during remeshing.
+        faces_is_selected : npt.ArrayLike | None, optional
+            Remesh only a subset of the faces in `self`.
+        edges_is_constrained: npt.ArrayLike | None = None
+            Do not remesh these edges.
+            * A constrained edge can be split or collapsed, but not flipped,
+                nor its endpoints moved by smoothing.
+            * Sub-edges generated by splitting are set to be constrained.
+            * Patch boundary edges (i.e. incident to only one face in the
+                range) are always considered as constrained edges.
+        relative : bool, optional
+            If true, `target_edge_length` is considered as a factor with which
+            to scale the mean edge length of the current surface rather than
+            an absolute value.
+        inplace : bool, optional
+            _description_, by default False
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+        if relative:
+            target_edge_length = target_edge_length * self.edges_norm().mean()
+
+        v, f = pmp.isotropic_remeshing(
+            self.vertices,
+            self.faces,
+            target_edge_length,
+            n_iter,
+            protect_constraints,
+            faces_is_selected,
+            edges_is_constrained,
+        )
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
+
+    def isotropic_remeshing_with_id(
+        self,
+        target_edge_length: float,
+        n_iter: int = 1,
+        protect_constraints: bool = False,
+        faces_is_selected: npt.ArrayLike | None = None,
+        relative: bool = False,
+        inplace: bool = False,
+    ):
+        """
+        In the property maps, -1 marks a new vertex/face.
+
+        relative : bool, optional
+            If true, `target_edge_length` is considered as a factor with which
+            to scale the mean edge length of the current surface rather than
+            an absolute value.
+
+        """
+        if relative:
+            target_edge_length = target_edge_length * self.edges_norm().mean()
+
+        v, f, v_pmap, f_pmap = pmp.isotropic_remeshing_with_id(
+            self.vertices,
+            self.faces,
+            target_edge_length,
+            n_iter,
+            faces_is_selected,
+            protect_constraints,
+        )
+        if inplace:
+            self.vertices = v
+            self.faces = f
+            return v_pmap, f_pmap
+        else:
+            return self.new_from(v, f), v_pmap, f_pmap
+
     def points_inside_surface(self, points, on_boundary_is_inside: bool = True):
         """For each point in `points`, test it is inside the surface or not."""
         return pmp.points_inside_surface(
             self.vertices, self.faces, points, on_boundary_is_inside
         )
+
+    def fair(self, indices, inplace: bool = False):
+        """
+
+        Parameters
+        ----------
+        indices :
+            Indices of the vertices to fair.
+
+        """
+        v = pmp.fair(self.vertices, self.faces, indices)
+        if inplace:
+            self.vertices = v
+        else:
+            return self.new_from(v, self.faces)
 
     def smooth_angle_and_area(
         self,
@@ -869,10 +1292,10 @@ class Surface:
         else:
             return self.new_from(v)
 
-    def _smooth_gaussian_prepare(
+    def _smooth_laplacian_prepare(
         self, arr: npt.NDArray | None = None, inplace: bool = False
     ) -> tuple[npt.NDArray, scipy.sparse.csr_array, npt.NDArray, npt.NDArray | None]:
-        """Precompute a few things needed when applying Gaussian smoothing
+        """Precompute a few things needed when applying Laplacian smoothing
         steps.
 
         nn:
@@ -883,16 +1306,16 @@ class Surface:
         assert arr.shape[0] == self.n_vertices
         out = arr if inplace else None
 
-        A = self.compute_vertex_adjacency()
+        A = self.adjacency_matrix()
         nn = A.sum(0)  # A is symmetric
         nn = nn[:, None] if arr.ndim > 1 else nn
 
         return arr, A, nn, out
 
-    def _smooth_gaussian_step(
+    def _smooth_laplacian_step(
         self, x: npt.NDArray, a: float, A: scipy.sparse.csr_array, nn, out=None
     ):
-        """Perform a single Gaussian smoothing steps, i.e.,
+        """Perform a single Laplacian smoothing steps, i.e.,
 
             x_i = x_i + a * sum_{j in N(i)} (w_ij * (x_j - x_i))
 
@@ -919,18 +1342,18 @@ class Surface:
             out += a * (A @ x / nn - x)
             return out
 
-    def smooth_gaussian(
+    def smooth_laplacian(
         self,
         arr: npt.NDArray | None = None,
         a: float = 0.33,
         n_iter: int = 1,
         inplace: bool = False,
     ):
-        """Perform a number of Gaussian (Laplacian) smoothing steps."""
+        """Perform a number of Laplacian smoothing steps."""
         apply_to_vertices = arr is None
-        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
+        arr, A, nn, out = self._smooth_laplacian_prepare(arr, inplace)
         for _ in range(n_iter):
-            arr = self._smooth_gaussian_step(arr, a, A, nn, out)
+            arr = self._smooth_laplacian_step(arr, a, A, nn, out)
 
         if apply_to_vertices:
             if inplace:
@@ -942,13 +1365,12 @@ class Surface:
 
     def smooth_shape(
         self,
-        constrained_vertices: npt.NDArray | None = None,
         time: float = 0.1,
         n_iter: int = 1,
+        constrained_vertices: npt.NDArray | None = None,
         inplace: bool = False,
     ):
-        """Perform shape smoothing via mean curvature flow (preserving vertex
-        density).
+        """Perform shape smoothing via mean curvature flow.
 
         Parameters
         ----------
@@ -971,6 +1393,59 @@ class Surface:
         else:
             return self.new_from(v)
 
+    def smooth_shape_by_curvature_threshold(
+        self,
+        time: float = 0.1,
+        n_iter: int = 1,
+        curv_threshold: float = 0.0,
+        apply_above_curv_threshold: bool = True,
+        ball_radius: float = -1.0,
+        inplace: bool = False,
+    ):
+        """Perform shape smoothing via mean curvature flow while constraining
+        vertices whose curvature is either above or below a certain threshold.
+        This allows strict shrinking or inflation of the surface whereas the
+        standard mean curvature flow of vertices (as performed by
+        `smooth_shape`) will shrink convex areas and inflate concave areas. The
+        default settings (`curv_threshold = 0.0` and
+        `apply_above_curv_threshold = True`) results in strict shrinkage.
+
+        Parameters
+        ----------
+        time : float
+            Amount of smoothing to apply at each iteration (higher values means
+            more aggressive smoothing).
+        n_iter : int
+            Number of curvature estimation and smoothing steps to apply.
+        curv_threshold : float
+            Apply smoothing to vertices above/below `curv_threshold` (default = 0.0).
+        apply_above_curv_threshold : bool
+            If true, apply smoothing to vertices whose curvature is *above*
+            `curv_threshold` (and vice verse if false) (default = True). If
+            true (and curv_threshold = 0.0), the surface will strictly shrink.
+        ball_radius : float
+            Smooth curvature estimates within a ball with `ball_radius`. Must
+            be > 0.0 except -1.0 which disables smoothing (default = -1.0).
+        inplace : bool
+
+        References
+        ----------
+        https://doc.cgal.org/latest/Polygon_mesh_processing/index.html
+        """
+        v = pmp.smooth_shape_by_curvature_threshold(
+            self.vertices,
+            self.faces,
+            time,
+            n_iter,
+            curv_threshold,
+            apply_above_curv_threshold,
+            ball_radius,
+        )
+        if inplace:
+            self.vertices = v
+        else:
+            return self.new_from(v)
+
     def smooth_taubin(
         self,
         arr: npt.NDArray | None = None,
@@ -979,8 +1454,8 @@ class Surface:
         n_iter: int = 1,
         inplace: bool = False,
     ):
-        """Perform Taubin smoothing, i.e., a positive (standard) Gaussian
-        smoothing step (`a`) followed by a Gaussian step with negative weight
+        """Perform Taubin smoothing, i.e., Laplacian smoothing step with
+        positive weight (`a`) followed by a Laplacian step with negative weight
         (`b`).
 
         References
@@ -989,14 +1464,14 @@ class Surface:
         """
         assert 0 < a < -b, "a should be between 0 and -b."
         apply_to_vertices = arr is None
-        arr, A, nn, out = self._smooth_gaussian_prepare(arr, inplace)
+        arr, A, nn, out = self._smooth_laplacian_prepare(arr, inplace)
         for _ in range(n_iter):
-            arr = self._smooth_gaussian_step(arr, a, A, nn, out)  # Gauss step
-            arr = self._smooth_gaussian_step(arr, b, A, nn, out)  # Taubin step
+            arr = self._smooth_laplacian_step(arr, a, A, nn, out)  # regular step
+            arr = self._smooth_laplacian_step(arr, b, A, nn, out)  # Taubin step
 
         if apply_to_vertices:
             if inplace:
-                return None
+                self.vertices = arr
             else:
                 return self.new_from(arr)
         else:
@@ -1313,7 +1788,25 @@ class Surface:
 
         return tris, weights, projs, dists
 
-    def remove_faces(self, faces: npt.ArrayLike):
+    def find_border_edges(self):
+        return pmp.find_border_edges(self.vertices, self.faces)
+
+    def extract_boundary_cycles(self):
+        return pmp.extract_boundary_cycles(self.vertices, self.faces)
+
+    def stitch_borders(self, inplace: bool = False):
+        v, f, vmap, fmap = pmp.stitch_borders(self.vertices, self.faces)
+        if inplace:
+            self.vertices = v
+            self.faces = f
+            return vmap, fmap
+        else:
+            return self.new_from(v, f), vmap, fmap
+
+    # def snap_borders(self):
+    #     return pmp.snap_borders(self.vertices, self.faces)
+
+    def remove_faces(self, faces: npt.ArrayLike, inplace: bool = False):
         """Remove the specified faces. The surface will be pruned afterwards,
         removing any unused vertices.
 
@@ -1322,17 +1815,53 @@ class Surface:
         faces
             Indices of the faces to remove.
         """
-        self.faces = np.delete(self.faces, faces, axis=0)
-        self.prune()
+        faces = np.asarray(faces)
+        if faces.dtype == bool:
+            assert len(faces) == self.n_faces
+            faces = np.flatnonzero(faces)
+        keep_faces = np.delete(self.faces, faces, axis=0)
+        if inplace:
+            self.faces = keep_faces
+            self.prune(inplace)
+        else:
+            new = self.new_from(self.vertices, keep_faces)
+            return new.prune(inplace)
 
-    def prune(self):
+    def remove_vertices(self, vertices: npt.NDArray, inplace: bool = False):
+        """Remove the specified vertices along with any faces that references
+        these vertices.
+
+        Paramters
+        ---------
+        vertices :
+            Array of indices or boolean mask indicating the vertices to remove.
+
+        Returns
+        -------
+
+        """
+        if vertices.dtype == bool:
+            assert len(vertices) == self.n_vertices
+            invalid_vertices = vertices[self.faces]
+        else:
+            invalid_vertices = np.isin(self.faces, vertices)
+        faces_to_remove = invalid_vertices.any(1)
+        return self.remove_faces(faces_to_remove, inplace)
+
+    def prune(self, inplace: bool = False):
         """Remove unused vertices and reindex faces."""
         vertices_used = np.unique(self.faces)
         reindexer = np.zeros(self.n_vertices, dtype=self.faces.dtype)
         reindexer[vertices_used] = np.arange(vertices_used.size, dtype=self.faces.dtype)
 
-        self.vertices = self.vertices[vertices_used]
-        self.faces = reindexer[self.faces]
+        v = self.vertices[vertices_used]
+        f = reindexer[self.faces]
+
+        if inplace:
+            self.vertices = v
+            self.faces = f
+        else:
+            return self.new_from(v, f)
 
     # def join(self, other):
     #     # Update faces first!
@@ -1367,39 +1896,106 @@ class Surface:
             v = self.vertices
         return v
 
-    def plot(self, scalars=None, mesh_kwargs=None, plotter_kwargs=None):
+    @classmethod
+    def from_point_set(
+        cls,
+        points: npt.NDArray,
+        alpha: float = 100.0,
+        offset: float = 500.0,
+        relative: bool = True,
+    ):
+        """Generate a surface from a point cloud by alpha wrapping.
+
+        Parameters
+        ----------
+        points : _type_
+            Points to be alpha wrapped.
+        alpha : _type_
+            Controls the size of the output triangles. If relative=True then
+            larger value gives smaller triangles; if relative=False then
+            smaller value gives smaller triangles.
+        offset : _type_
+            Controls how tight the points should be wrapped. If relative=True
+            then larger value gives better approximation of object. If
+            relative=False then smaller value gives better approximation of
+            object.
+        relative : bool, optional
+            If true, `alpha` and `offset` are interpreted as relative to the
+            diagonal length of the bounding box of `points`, i.e.,
+
+                alpha = diagonal_length / alpha
+                offset = diagonal_length / offset
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+
+        if relative:
+            diag_length = np.linalg.norm(points.max(0) - points.min(0))
+            alpha = diag_length / alpha
+            offset = diag_length / offset
+
+        v, f = cortech.cgal.alpha_wrap_3.alpha_wrap_3_points(points, alpha, offset)
+        return cls(v, f)
+
+    def alpha_wrap(
+        self, alpha: float = 100.0, offset: float = 500.0, relative: bool = True
+    ):
+        """Generate a surface by alpha wrapping this surface.
+
+        Parameters
+        ----------
+        alpha : _type_
+            Controls the size of the output triangles. If relative=True then
+            larger value gives smaller triangles; if relative=False then
+            smaller value gives smaller triangles.
+        offset : _type_
+            Controls how tight the points should be wrapped. If relative=True
+            then larger value gives better approximation of object. If
+            relative=False then smaller value gives better approximation of
+            object.
+        relative : bool, optional
+            If true, `alpha` and `offset` are interpreted as relative to the
+            diagonal length of the bounding box of `points`, i.e.,
+
+                alpha = diagonal_length / alpha
+                offset = diagonal_length / offset
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+
+        if relative:
+            diag_length = np.linalg.norm(points.max(0) - points.min(0))
+            alpha = diag_length / alpha
+            offset = diag_length / offset
+
+        v, f = cortech.cgal.alpha_wrap_3.alpha_wrap_3_surface(
+            self.vertices, self.faces, alpha, offset
+        )
+        return self.new_from(v, f)
+
+    def plot(self, scalars=None, mesh_kwargs=None, plotter_kwargs=None, show=True):
         # only works when pyvista is installed
         from cortech.visualization import plot_surface
 
-        plot_surface(
+        plotter = plot_surface(
             self, scalars, mesh_kwargs=mesh_kwargs, plotter_kwargs=plotter_kwargs
         )
+        if show:
+            plotter.show()
+        return plotter
 
-    def save_off(self, filename):
-        """Writes mesh surfaces as an .off file
-
-        Parameters
-        -----------
-        msh: Mesh
-            Mesh object
-        fn: str
-            Name of file
-        """
-        with open(filename, "wb") as f:
-            f.write("OFF\n".encode())
-            f.write("# File created by CORTECH \n\n".encode())
-            np.savetxt(
-                f, np.array([self.n_vertices, self.n_faces, 0])[None, :], fmt="%u"
-            )
-            np.savetxt(f, self.vertices, fmt="%0.6f")
-            np.savetxt(
-                f,
-                np.concatenate(
-                    (np.repeat(self.faces.shape[1], self.n_faces)[:, None], self.faces),
-                    axis=1,
-                ).astype(np.uint),
-                fmt="%u",
-            )
+    def new_from(self, vertices, faces: npt.NDArray | None = None):
+        """Return a new Surface object based on self but with `vertices` instead."""
+        faces = self.faces.copy() if faces is None else faces
+        return self.__class__(
+            vertices, faces, self.space, self.geometry, self.edge_pairs
+        )
 
     def as_gifti(self):
         header = None
@@ -1433,6 +2029,9 @@ class Surface:
 
     def save(self, filename: Path | str, scalars: dict | None = None):
         filename = Path(filename)
+        _warn_msg = "`scalars` were provided but {ext} format does not support data fields (ignoring them)"
+        if scalars is not None and filename.suffix in {".gii", ".off", ".stl"}:
+            warnings.warn(_warn_msg.format(ext=filename.suffix))
 
         match filename.suffix:
             case ".gii":
@@ -1448,6 +2047,8 @@ class Surface:
             case ".off":
                 self.save_off(filename)
             case _:
+                if scalars is not None:
+                    warnings.warn(_warn_msg.format(ext="FreeSurfer's surface"))
                 cortech.freesurfer.write_geometry(
                     filename,
                     self.vertices,
@@ -1540,7 +2141,8 @@ class Surface:
         import pyvista as pv
 
         m = pv.read(filename)
-        return cls(m.points, m.faces.reshape(-1, 4)[:, 1:], **kwargs)
+        faces = m.cells if m.faces is None else m.faces
+        return cls(m.points, faces.reshape(-1, 4)[:, 1:], **kwargs)
 
     @classmethod
     def from_file(cls, filename: Path | str, **kwargs):
@@ -1573,6 +2175,56 @@ class Surface:
             raise ValueError(
                 f"Unable to find {surface} in {subject_dir}. Tried {filename} and {filename_gii}."
             )
+
+
+    def adjacency_matrix(self, which="vertex", include_self: bool = False):
+        """Assemble the adjacency matrix for vertices or faces."""
+
+        match which:
+            case "vertex":
+                pairs = list(itertools.combinations(np.arange(self.faces.shape[1]), 2))
+                row_ind = np.concatenate([self.faces[:, i] for p in pairs for i in p])
+                col_ind = np.concatenate(
+                    [self.faces[:, i] for p in pairs for i in p[::-1]]
+                )
+                data = np.ones_like(row_ind) / 2.0
+                shape = (self.n_vertices, self.n_vertices)
+
+            case "face":
+                edges = self.edges(sort_dim1=True)  # e.g., (1,0) and (0,1) -> (0,1)
+
+                # Now sort the vertex-vertex edges
+                # first column has 1st priority
+                a0 = edges[:, 0].argsort()
+                s0 = edges[a0]
+                # second column has 2nd priority (actually, we just want to sub-sort `s0`)
+                a1 = s0[:, 1].argsort()
+                s1 = s0[a1]
+                # "stable" keeps order of like items, hence both columns will be
+                # sorted after this operation
+                a2 = np.argsort(s1[:, 0], kind="stable")  # .argsort(stable=True)
+                # s2 = s1[a2] # the sorted edges
+
+                faces_enum = np.broadcast_to(
+                    np.arange(self.n_faces)[:, None], self.faces.shape
+                ).ravel()
+                face_adjacency = faces_enum[a0[a1[a2]]].reshape(-1, 2)
+
+                row_ind = face_adjacency.ravel()
+                col_ind = face_adjacency[:, ::-1].ravel()
+                shape = (self.n_faces, self.n_faces)
+                data = np.ones(face_adjacency.size)
+
+        A = scipy.sparse.csr_array((data, (row_ind, col_ind)), shape)
+
+        if include_self:
+            A = A.tolil()
+            A.setdiag(1)
+            A = A.tocsr()
+
+        A.sum_duplicates()  # ensure canonical format
+
+        return A
 
 class MultiSurface(Surface):
     @property
@@ -1607,30 +2259,28 @@ class Sphere(Surface):
         # Ensure on unit sphere
         if normalize:
             self.vertices = cortech.utils.normalize(self.vertices, axis=-1)
-        self._mapping_matrix = None
+        self._proj_matrix = None
 
-    def project(
-        self,
-        target: "Sphere",
-        method: str = "linear",
-        n_closest_vertices: int = 5,
+    def to_spherical_coordinates(self):
+        return cortech.sphere_utils.cart_to_sph(self.vertices)
+
+    def set_projection(
+        self, points: npt.NDArray, method: str = "linear", n_closest_vertices: int = 5
     ):
-        """Project `self` to `target`, i.e., compute a mapping that can be used
-        to map vertex data from `self` to the vertices of `target`. The mapping
-        is estimated by projecting the vertices of `target` onto the surface of
-        `self`.
+        """Project `points` to `self`, i.e., compute a mapping that can be used
+        to map vertex data from `self` to `points`.
 
         The projection matrix is a sparse matrix with dimensions
-        (target.n_vertices, self.n_vertices) where each row has exactly one
+        (len(points), self.n_vertices) where each row has exactly one
         (nearest) or three (linear) entries that sum to one.
 
         For example, to map data from fsaverage to subject space,
 
-            fsavg_data = ...
+            data_on_fsavg = ...
             fsavg = SphericalRegistration( ... )
             subject = SphericalRegistration( ... )
-            fsavg.project(subject)
-            subject_data = fsavg.resample( fsavg_data )
+            fsavg.project(subject.vertices)
+            data_on_subject = fsavg.resample( data_on_fsavg )
 
         PARAMETERS
         ----------
@@ -1645,49 +2295,104 @@ class Sphere(Surface):
             `self`. We find the triangles to which these points belong and then
             test only against these triangles.
         """
+        n_points, n_dim = points.shape
+
         match method:
             case "nearest":
                 kdtree = scipy.spatial.cKDTree(self.vertices)
-                cols = kdtree.query(target.vertices)[1]
-                rows = np.arange(target.n_vertices)
-                weights = np.ones(target.n_vertices, dtype=int)
+                cols = kdtree.query(points)[1]
+                rows = np.arange(n_points)
+                weights = np.ones(n_points, dtype=int)
             case "linear":
-                tris, weights, _, _ = self.project_points(
-                    target.vertices, n_closest_vertices
-                )
-                rows = np.repeat(np.arange(target.n_vertices), target.n_dim)
+                tris, weights, _, _ = self.project_points(points, n_closest_vertices)
+                rows = np.repeat(np.arange(n_points), n_dim)
                 cols = self.faces[tris].ravel()
                 weights = weights.ravel()
             case _:
                 raise ValueError(
-                    f"Invalid mapping method, please select `nearest` or `linear` (got {method})."
+                    f"Invalid projection method, please select `nearest` or `linear` (got {method})."
                 )
 
-        self._mapping_matrix = scipy.sparse.csr_array(
-            (weights, (rows, cols)), shape=(target.n_vertices, self.n_vertices)
+        self._proj_matrix = scipy.sparse.csr_array(
+            (weights, (rows, cols)), shape=(n_points, self.n_vertices)
         )
-        self._mapping_matrix.sum_duplicates()
+        self._proj_matrix.sum_duplicates()
 
     def resample(self, values: npt.NDArray):
-        """Pull values defined on `self` to the vertices of the target surface
-        used as input to `project`.
+        """Pull values defined on `self` to the points used as input to
+        `set_projection`.
 
         Parameters
         ----------
         values : npt.NDArray
-            Data to map to the target surface. The shape is (self.n_vertices, ...)
+            Data to map to the target points. The shape must be
+            (self.n_vertices, ...)
 
         Returns
         -------
         mapped values: npt.NDArray
-            Data mapped onto the target surface. The shape is (target.n_vertices, ...)
+            Data mapped onto the target surface. The shape is
+            (len(points), ...)
         """
-        if self._mapping_matrix is None:
-            raise RuntimeError("No mapping matrix found. Please run `project`.")
-        return self._mapping_matrix @ values
+        if self._proj_matrix is None:
+            raise RuntimeError(
+                "No projection matrix found. Please run `set_projection`."
+            )
+        return self._proj_matrix @ values
 
-    def project_and_resample(
-        self, target: "Sphere", values: npt.NDArray, *args, **kwargs
+    def set_projection_and_resample(
+        self, target_points: npt.NDArray, values: npt.NDArray, *args, **kwargs
     ):
-        self.project(target, *args, **kwargs)
+        self.set_projection(target_points, *args, **kwargs)
         return self.resample(values)
+
+
+def shrink_surface(
+    s: Surface,
+    smooth_kwargs: list[dict] | None = None,
+    remesh_kwargs: dict | None = None,
+    decoupling_amount: float = 0.1,
+    do_remesh: bool = True,
+    do_decouple: bool = True,
+):
+    if smooth_kwargs is None:
+        smooth_kwargs = [
+            dict(time=1.0, n_iter=10, curv_threshold=0.2, ball_radius=0.5),
+            dict(time=1.0, n_iter=10, curv_threshold=0.1, ball_radius=0.5),
+            dict(time=1.0, n_iter=10, curv_threshold=0.05, ball_radius=0.5),
+            dict(time=1.0, n_iter=5, curv_threshold=0.025, ball_radius=0.5),
+            dict(time=1.0, n_iter=5, curv_threshold=0.0, ball_radius=0.5),
+        ]
+
+    if remesh_kwargs is None:
+        remesh_kwargs = dict(target_edge_length=0.75, n_iter=5)
+
+    for i, kw in enumerate(smooth_kwargs, 1):
+        print(f"Iteration :: {i} of {len(smooth_kwargs)}")
+
+        print(">> Smoothing")
+        s.smooth_shape_by_curvature_threshold(**kw, inplace=True)
+        if do_remesh:
+            print(">> Remeshing")
+            s.isotropic_remeshing(**remesh_kwargs, inplace=True)
+            s.tangential_relaxation(n_iter=5, inplace=True)
+
+        if do_decouple:
+            if i < len(smooth_kwargs):
+                curv = s.interpolated_corrected_curvatures()
+                n = s.vertex_normals()
+                mask = curv.H <= 0.0
+                s.vertices[mask] = s.vertices[mask] - decoupling_amount * n[mask]
+
+    return s
+
+
+# def inflate_surface(s: Surface, smooth_kwargs: list[dict] | None):
+# inflate
+# smooth_kwargs = [
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.2, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.1, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.05, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=-0.025, ball_radius=0.5, apply_above_curv_threshold=False),
+#     dict(time=1.0, n_iter=10, curv_threshold=0.0, ball_radius=0.5, apply_above_curv_threshold=False),
+# ]

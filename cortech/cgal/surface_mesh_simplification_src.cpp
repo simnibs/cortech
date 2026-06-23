@@ -7,6 +7,8 @@
 
 #include <cgal_helpers.h>
 
+using std::vector;
+
 using K = CGAL::Exact_predicates_inexact_constructions_kernel;
 using Surface_mesh = CGAL::Surface_mesh<K::Point_3>;
 using edges_size_type = boost::graph_traits<Surface_mesh>::edges_size_type;
@@ -15,12 +17,12 @@ using face_descriptor = boost::graph_traits<Surface_mesh>::face_descriptor;
 
 namespace SMS = CGAL::Surface_mesh_simplification;
 
-std::pair<std::vector<std::vector<float>>, std::vector<std::vector<int>>> sms_simplify(
-    std::vector<std::vector<float>> vertices,
-    std::vector<std::vector<int>> faces,
+std::pair<vector<vector<float>>, vector<vector<int>>> sms_simplify(
+    vector<vector<float>> vertices,
+    vector<vector<int>> faces,
     int stop_face_count)
 {
-    Surface_mesh mesh = CGAL_sm::build(vertices, faces);
+    Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces);
 
     SMS::Face_count_stop_predicate<Surface_mesh> stop((edges_size_type)stop_face_count);
 
@@ -36,8 +38,5 @@ std::pair<std::vector<std::vector<float>>, std::vector<std::vector<int>>> sms_si
     // CGAL::parameters::get_cost(gh_cost).get_placement(placement)
     SMS::edge_collapse(mesh, stop);
     mesh.collect_garbage();
-
-    auto pair = CGAL_sm::extract_vertices_and_faces(mesh);
-
-    return pair;
+    return cortech::extract_vertices_and_faces(mesh);
 }

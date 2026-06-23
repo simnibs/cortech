@@ -18,14 +18,29 @@ def cart_to_sph(points) -> npt.NDArray:
     spherical_coordinates: npt.NDArray
         Spherical coordinates of the form (r, theta, phi) where
 
-            theta [  0, pi]   from north to south (lattitude, polar angle)
-            phi   [-pi, pi]   around equator (longitude, azimuth)
+        r : radius
+        theta [  0; pi]
+            Inclination (elevation) angle going from north (= 0) to south (= pi)
+        phi [-pi; pi]
+            Azimuth angle (going around equator)
 
     """
-    r = points.norm(dim=-1)
-    # atan2 chooses the correct quadrant
+    zero = np.isclose(points, 0.0)
+
+    r = np.linalg.norm(points, axis=-1)
     theta = np.acos(points[..., 2] / r)
+    # atan2 chooses the correct quadrant
     phi = np.atan2(points[..., 1], points[..., 0])
+
+    # corner cases
+    # x = y = 0 (phi is nonsensical)
+    phi[zero[..., :2].all(-1)] = -np.pi
+    # x = y = z = 0
+    undefined = zero.all(-1)
+    r[undefined] = 0.0
+    theta[undefined] = 0.0
+    phi[undefined] = 0.0
+
     return np.stack((r, theta, phi), axis=-1)
 
 

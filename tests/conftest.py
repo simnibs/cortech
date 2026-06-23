@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from cortech.sphere import fibonacci_points, fibonacci_sphere
+from cortech.sphere_utils import fibonacci_points, fibonacci_sphere
 
 
 @pytest.fixture(name="BERT_DIR", scope="class")

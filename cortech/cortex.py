@@ -4,8 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import numpy.typing as npt
-import nibabel as nib
-from scipy.spatial import KDTree
+import scipy.spatial
 
 import cortech.utils
 from cortech.surface import Surface, Sphere
@@ -53,42 +52,80 @@ class Hemisphere:
     def has_infra_supra_model(self):
         return self.infra_supra_model is not None
 
-    def compute_node_to_node_difference(self) -> npt.NDArray[float]:
-        """Calculate thickness at each vertex of node-matched surfaces."""
-
-        # FIXME this should be a better estimate than simple vertex-to-vertex
-        # distance?
-        return np.linalg.norm(self.pial.vertices - self.white.vertices, axis=1)
-
-    def compute_thickness(self) -> npt.NDArray[float]:
-        """This function calculates a FreeSurfer "style" thickness by finding the minimum distance between a white matter
-        node and every pial surface node, doing the same the other way around, and averaging those two minimum distances
-        for every node. It will also ensure the thickness estimate is between 0 and 5 mm.
+    def compute_thickness(self, method="vertex-to-closest") -> npt.NDArray[float]:
+        """Calculate thickness at each vertex of node-matched surfaces.
 
         Parameters
         ----------
+        method : str
+            `vertex-to-closest`. For each vertex on white (pial), find the
+            closest vertex on pial (white) and compute the average of white-to-
+            pial and pial-to-white.
+
+                d_i = 0.5 * min || V(pial)_j - V(white)_i ||
+                    + 0.5 * min || V(pial)_i - V(white)_j ||
+
+            `vertex-to-vertex`. Calculate the distance between corresponding
+            vertices on white and pial surfaces.
+
+                d_i = || V(pial)_i - V(white)_i ||
+
+        """
+        vw = self.white.vertices
+        vp = self.pial.vertices
+        match method:
+            case "vertex-to-closest":
+                p2w, _ = scipy.spatial.KDTree(vw).query(vp)
+                w2p, _ = scipy.spatial.KDTree(vp).query(vw)
+                thickness = 0.5 * p2w + 0.5 * w2p
+            case "vertex-to-vertex":
+                thickness = np.linalg.norm(vp - vw, axis=1)
+            case _:
+                raise ValueError(f"Invalid `method` {method}")
+        return np.clip(thickness, 0, 5)
+
+    def compute_freesurfer_thickness(
+        self,
+        nbhd_size: int = 7,
+        max_thick: float = 5.0,
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Calculate cortical thickness using the FreeSurfer algorithm.
+
+        Mirrors MRISmeasureCorticalThickness: two-pass BFS over the k-ring
+        topological neighborhood with a pial-normal outward-direction filter.
+
+        Parameters
+        ----------
+        nbhd_size : int
+            Number of BFS rings to search (FreeSurfer default: 7).
+        max_thick : float
+            Maximum thickness value in mm (FreeSurfer default: 5.0).
 
         Returns
         -------
-        thickness : np.array(float)
-                        The average, clipped cortical thickness estimate
+        thickness : ndarray, shape (n_vertices,)
+            Cortical thickness in mm, capped at `max_thick`.
+        directions : ndarray, shape (n_vertices, 3)
+            Unit vectors from each white vertex toward its closest pial match.
         """
+        vw = self.white.vertices
+        vp = self.pial.vertices
+        np_ = self.pial.vertex_normals()
 
-        vi = self.white.vertices
-        vo = self.pial.vertices
+        knn, _ = self.white.k_ring_neighbors(nbhd_size)
 
-        tree1 = KDTree(vi)
-        tree2 = KDTree(vo)
+        knn_sizes = np.array([len(k) for k in knn], dtype=np.int64)
+        knn_offsets = np.empty(len(knn) + 1, dtype=np.int64)
+        knn_offsets[0] = 0
+        np.cumsum(knn_sizes, out=knn_offsets[1:])
+        knn_flat = np.concatenate(knn).astype(np.int64)
 
-        # Compute the closest distance one way
-        dist1, inds1 = tree1.query(vo)
+        w2p, gw, directions = cortech.utils._compute_freesurfer_thickness(
+            vw, vp, np_, knn_flat, knn_offsets
+        )
 
-        # And the other way
-        dist2, inds2 = tree2.query(vi)
-
-        av_min_dist = (dist1 + dist2) / 2
-
-        return np.clip(av_min_dist, 0, 5)
+        thickness = np.minimum(0.5 * (w2p + gw), max_thick)
+        return thickness, directions
 
     def compute_average_curvature(
         self,

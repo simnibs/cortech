@@ -2,7 +2,7 @@ python_sources = [
     '__init__.py',
     'constants.py',
     'cortex.py',
-    'sphere.py',
+    'sphere_utils.py',
     'surface.py',
     'utils.py',
     'visualization.py',
