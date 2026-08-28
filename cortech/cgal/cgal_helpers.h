@@ -62,16 +62,20 @@ namespace cortech
 
     std::pair<Surface_mesh, vector<Surface_mesh::Vertex_index>> from_polygon_soup_with_vertex_map(
         const vector<vector<float>> &vertices,
-        const vector<vector<int>> &faces);
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
     std::tuple<Surface_mesh, vector<Surface_mesh::Vertex_index>, vector<Surface_mesh::Face_index>> from_polygon_soup_with_vertex_and_face_map(
         const vector<vector<float>> &vertices,
-        const vector<vector<int>> &faces);
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
     Surface_mesh from_polygon_soup(
         const vector<vector<float>> &vertices,
-        const vector<vector<int>> &faces);
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
     Surface_mesh from_polygon_soup(
         const vector<K::Point_3> &points,
-        const vector<vector<int>> &faces);
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
     vector<K::Point_3> vertices_to_point3(const vector<vector<float>> &vertices);
     vector<vector<float>> point3_to_vertices(const vector<K::Point_3> &points);
     vector<vector<float>> extract_vertices(const Surface_mesh &mesh);

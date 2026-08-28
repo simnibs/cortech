@@ -19,6 +19,7 @@
 #include <CGAL/Polygon_mesh_processing/fair.h>
 #include <CGAL/Polygon_mesh_processing/interpolated_corrected_curvatures.h>
 #include <CGAL/Polygon_mesh_processing/intersection.h>
+// #include <CGAL/Polygon_mesh_processing/manifoldness.h>
 #include <CGAL/Polygon_mesh_processing/orient_polygon_soup_extension.h>
 #include <CGAL/Polygon_mesh_processing/orientation.h>
 #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
@@ -478,6 +479,16 @@ cortech::SurfaceMesh pmp_duplicate_non_manifold_edges_in_polygon_soup(
     return {vo, faces};
 }
 
+cortech::SurfaceMesh pmp_duplicate_non_manifold_vertices(
+    vector<vector<float>> vertices,
+    vector<vector<int>> faces)
+{
+    Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces, false);
+    PMP::duplicate_non_manifold_vertices(mesh);
+    auto out = cortech::extract_vertices_and_faces(mesh);
+    return out;
+}
+
 vector<vector<int>> pmp_extract_boundary_cycles(
     vector<vector<float>> vertices,
     vector<vector<int>> faces)
@@ -565,7 +576,7 @@ cortech::SurfaceMesh pmp_refine(
     else
     {
         vector<Face_index> selected_faces(faces_to_refine.size());
-        for (int i = 0; i < faces_to_refine.size(); i++)
+        for (std::size_t i = 0; i < faces_to_refine.size(); i++)
             selected_faces[i] = Face_index(faces_to_refine[i]);
         PMP::refine(
             mesh,
@@ -704,10 +715,28 @@ bool pmp_is_polygon_soup_a_polygon_mesh(vector<vector<int>> faces)
     return CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
 }
 
-cortech::SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
+struct Allow_no_surface_crossing
+{
+  CGAL::Side_of_triangle_mesh<Surface_mesh, K> m_side_of_tmesh;
+
+  Allow_no_surface_crossing(const Surface_mesh& mesh)
+    : m_side_of_tmesh(mesh)
+  {}
+
+  bool operator()(Vertex_index, K::Point_3 src, K::Point_3 tgt) const
+  {
+    const CGAL::Bounded_side s_src = m_side_of_tmesh(src);
+    const CGAL::Bounded_side s_tgt = m_side_of_tmesh(tgt);
+    return (s_src == s_tgt);
+  }
+};
+
+cortech::SurfaceMeshWithFaceidAndPMaps pmp_adaptive_remeshing(
     vector<vector<float>> vertices,
     vector<vector<int>> faces,
-    double target_edge_length,
+    double error_tol,
+    double edge_length_min,
+    double edge_length_max,
     int n_iterations = 1,
     bool protect_constraints = false,
     bool collapse_constraints = true,
@@ -715,6 +744,7 @@ cortech::SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
     bool do_collapse = true,
     bool do_flip = true,
     int number_of_relaxation_steps = 1,
+    bool disallow_surface_crossing = false,
     vector<int> face_id = {},
     vector<int> face_is_selected = {},
     vector<int> vertex_is_constrained = {},
@@ -732,7 +762,8 @@ cortech::SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
     auto vcs = make_vertex_is_constrained_set(vertex_is_constrained, v2v);
     CGAL::Boolean_property_map<std::set<Vertex_index>> vcm(vcs);
 
-    auto np = CGAL::parameters::number_of_iterations(n_iterations)
+    auto make_np = [&]() {
+        return CGAL::parameters::number_of_iterations(n_iterations)
         .edge_is_constrained_map(ecm)
         .vertex_is_constrained_map(vcm)
         .protect_constraints(protect_constraints)
@@ -742,13 +773,34 @@ cortech::SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
         .do_collapse(do_collapse)
         .do_flip(do_flip)
         .number_of_relaxation_steps(number_of_relaxation_steps);
+    };
 
-    if (face_is_selected.empty())
-        PMP::isotropic_remeshing(mesh.faces(), target_edge_length, mesh, np);
+    const std::pair min_max_length{edge_length_min, edge_length_max};
+
+    if (face_is_selected.empty()){
+        PMP::Adaptive_sizing_field<Surface_mesh> sizing_field(
+            error_tol, min_max_length, mesh.faces(), mesh);
+
+        if (disallow_surface_crossing){
+            Allow_no_surface_crossing shall_move(mesh);
+            PMP::isotropic_remeshing(mesh.faces(), sizing_field, mesh, make_np().allow_move_functor(shall_move));
+        }
+        else
+            PMP::isotropic_remeshing(mesh.faces(), sizing_field, mesh, make_np());
+    }
     else
     {
         auto faces_to_remesh = index_vector_to_face_range(face_is_selected);
-        PMP::isotropic_remeshing(faces_to_remesh, target_edge_length, mesh, np);
+
+        PMP::Adaptive_sizing_field<Surface_mesh> sizing_field(
+            error_tol, min_max_length, faces_to_remesh, mesh);
+
+        if (disallow_surface_crossing){
+            Allow_no_surface_crossing shall_move(mesh);
+            PMP::isotropic_remeshing(faces_to_remesh, sizing_field, mesh, make_np().allow_move_functor(shall_move));
+        }
+        else
+            PMP::isotropic_remeshing(faces_to_remesh, sizing_field, mesh, make_np());
     }
 
     // explicit garbage collection needed as vertices are only *marked* as removed
@@ -766,82 +818,70 @@ cortech::SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
     return {out.vertices, out.faces, out_face_id, orig_v_id, orig_f_id};
 }
 
-cortech::SurfaceMesh pmp_adaptive_remeshing(
+
+cortech::SurfaceMeshWithFaceidAndPMaps pmp_custom_remeshing(
     vector<vector<float>> vertices,
     vector<vector<int>> faces,
-    double error_tol,
-    double edge_length_min,
-    double edge_length_max,
+    vector<float> sizing,
     int n_iterations = 1,
-    bool protect_constraints = true,
+    bool protect_constraints = false,
+    bool collapse_constraints = true,
+    bool do_split = true,
+    bool do_collapse = true,
+    bool do_flip = true,
+    int number_of_relaxation_steps = 1,
+    bool disallow_surface_crossing = false,
+    vector<int> face_id = {},
     vector<int> face_is_selected = {},
+    vector<int> vertex_is_constrained = {},
     vector<vector<int>> edge_is_constrained = {})
 {
-    auto mesh_and_v2v = cortech::from_polygon_soup_with_vertex_map(vertices, faces);
-    Surface_mesh &mesh = mesh_and_v2v.first;
-    vector<Vertex_index> &v2v = mesh_and_v2v.second;
+    auto [mesh, v2v] = cortech::from_polygon_soup_with_vertex_map(vertices, faces);
+    // auto [sizing_mesh, v2v] = cortech::from_polygon_soup_with_vertex_map(vertices, faces);
+    // auto sizing_mesh = cortech::from_polygon_soup(vertices, faces);
 
-    const std::pair min_max_length{edge_length_min, edge_length_max};
+    add_property_map_face_id(mesh);
+    add_property_map_vertex_id(mesh);
+    auto face_patch_map = add_property_map_face_patch_id(mesh, face_id);
+    // auto vcm = make_vertex_is_constrained_map(vertex_is_constrained, v2v);
+    // auto ecm = make_edge_is_constrained_map(mesh, edge_is_constrained, v2v);
+    auto ecs = make_edge_set(mesh, edge_is_constrained, v2v);
+    CGAL::Boolean_property_map<std::set<Edge_index>> ecm(ecs);
+    auto vcs = make_vertex_is_constrained_set(vertex_is_constrained, v2v);
+    CGAL::Boolean_property_map<std::set<Vertex_index>> vcm(vcs);
 
-    if (face_is_selected.empty())
-    {
-        PMP::Adaptive_sizing_field<Surface_mesh> sizing_field(
-            error_tol, min_max_length, mesh.faces(), mesh);
+    auto make_np = [&]() {
+        return CGAL::parameters::number_of_iterations(n_iterations)
+        .edge_is_constrained_map(ecm)
+        .vertex_is_constrained_map(vcm)
+        .protect_constraints(protect_constraints)
+        .collapse_constraints(collapse_constraints)
+        .face_patch_map(face_patch_map)
+        .do_split(do_split)
+        .do_collapse(do_collapse)
+        .do_flip(do_flip)
+        .number_of_relaxation_steps(number_of_relaxation_steps);
+    };
 
-        if (edge_is_constrained.empty())
-        {
+    PMP::Precomputed_sizing_field<Surface_mesh> sizing_field(sizing, mesh);
 
-            PMP::isotropic_remeshing(
-                mesh.faces(),
-                sizing_field,
-                mesh,
-                CGAL::parameters::number_of_iterations(n_iterations)
-                    .protect_constraints(protect_constraints));
+    if (face_is_selected.empty()){
+        if (disallow_surface_crossing){
+            Allow_no_surface_crossing shall_move(mesh);
+            PMP::isotropic_remeshing(mesh.faces(), sizing_field, mesh, make_np().allow_move_functor(shall_move));
         }
         else
-        {
-
-            auto ecs = make_edge_set(mesh, edge_is_constrained, v2v);
-            CGAL::Boolean_property_map<std::set<Edge_index>> ecm(ecs);
-            PMP::isotropic_remeshing(
-                mesh.faces(),
-                sizing_field,
-                mesh,
-                CGAL::parameters::number_of_iterations(n_iterations)
-                    .protect_constraints(protect_constraints)
-                    .edge_is_constrained_map(ecm));
-        }
+            PMP::isotropic_remeshing(mesh.faces(), sizing_field, mesh, make_np());
     }
     else
     {
-        vector<Face_index> faces_to_remesh(face_is_selected.size());
-        for (int i = 0; i < face_is_selected.size(); i++)
-            faces_to_remesh[i] = Face_index(face_is_selected[i]);
-
-        PMP::Adaptive_sizing_field<Surface_mesh> sizing_field(
-            error_tol, min_max_length, faces_to_remesh, mesh);
-
-        if (edge_is_constrained.empty())
-        {
-            PMP::isotropic_remeshing(
-                faces_to_remesh,
-                sizing_field,
-                mesh,
-                CGAL::parameters::number_of_iterations(n_iterations)
-                    .protect_constraints(protect_constraints));
+        auto faces_to_remesh = index_vector_to_face_range(face_is_selected);
+        if (disallow_surface_crossing){
+            Allow_no_surface_crossing shall_move(mesh);
+            PMP::isotropic_remeshing(faces_to_remesh, sizing_field, mesh, make_np().allow_move_functor(shall_move));
         }
         else
-        {
-            auto ecs = make_edge_set(mesh, edge_is_constrained, v2v);
-            CGAL::Boolean_property_map<std::set<Edge_index>> ecm(ecs);
-            PMP::isotropic_remeshing(
-                faces_to_remesh,
-                sizing_field,
-                mesh,
-                CGAL::parameters::number_of_iterations(n_iterations)
-                    .protect_constraints(protect_constraints)
-                    .edge_is_constrained_map(ecm));
-        }
+            PMP::isotropic_remeshing(faces_to_remesh, sizing_field, mesh, make_np());
     }
 
     // explicit garbage collection needed as vertices are only *marked* as removed
@@ -849,7 +889,107 @@ cortech::SurfaceMesh pmp_adaptive_remeshing(
     //   https://github.com/CGAL/cgal/discussions/6625
     //   https://doc.cgal.org/latest/Surface_mesh/index.html#sectionSurfaceMesh_memory
     mesh.collect_garbage();
-    return cortech::extract_vertices_and_faces(mesh);
+
+    auto out = cortech::extract_vertices_and_faces(mesh);
+
+    auto orig_v_id = vertex_property_map_to_vector(mesh, "v:original_id");
+    auto orig_f_id = face_property_map_to_vector(mesh, "f:original_id");
+    auto out_face_id = face_property_map_to_vector(mesh, "f:patch_id");
+
+    return {out.vertices, out.faces, out_face_id, orig_v_id, orig_f_id};
+}
+
+cortech::SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
+    vector<vector<float>> vertices,
+    vector<vector<int>> faces,
+    double target_edge_length,
+    int n_iterations = 1,
+    bool protect_constraints = false,
+    bool collapse_constraints = true,
+    bool do_split = true,
+    bool do_collapse = true,
+    bool do_flip = true,
+    int number_of_relaxation_steps = 1,
+    bool disallow_surface_crossing = false,
+    vector<int> face_id = {},
+    vector<int> face_is_selected = {},
+    vector<int> vertex_is_constrained = {},
+    vector<vector<int>> edge_is_constrained = {})
+{
+    auto [mesh, v2v] = cortech::from_polygon_soup_with_vertex_map(vertices, faces);
+
+    add_property_map_face_id(mesh);
+    add_property_map_vertex_id(mesh);
+    auto face_patch_map = add_property_map_face_patch_id(mesh, face_id);
+    // auto vcm = make_vertex_is_constrained_map(vertex_is_constrained, v2v);
+    // auto ecm = make_edge_is_constrained_map(mesh, edge_is_constrained, v2v);
+    auto ecs = make_edge_set(mesh, edge_is_constrained, v2v);
+    CGAL::Boolean_property_map<std::set<Edge_index>> ecm(ecs);
+    auto vcs = make_vertex_is_constrained_set(vertex_is_constrained, v2v);
+    CGAL::Boolean_property_map<std::set<Vertex_index>> vcm(vcs);
+
+    auto make_np = [&]() {
+        return CGAL::parameters::number_of_iterations(n_iterations)
+        .edge_is_constrained_map(ecm)
+        .vertex_is_constrained_map(vcm)
+        .protect_constraints(protect_constraints)
+        .collapse_constraints(collapse_constraints)
+        .face_patch_map(face_patch_map)
+        .do_split(do_split)
+        .do_collapse(do_collapse)
+        .do_flip(do_flip)
+        .number_of_relaxation_steps(number_of_relaxation_steps);
+    };
+
+    if (face_is_selected.empty()){
+        if (disallow_surface_crossing){
+            Allow_no_surface_crossing shall_move(mesh);
+            PMP::isotropic_remeshing(mesh.faces(), target_edge_length, mesh, make_np().allow_move_functor(shall_move));
+        }
+        else
+            PMP::isotropic_remeshing(mesh.faces(), target_edge_length, mesh, make_np());
+    }
+    else
+    {
+        auto faces_to_remesh = index_vector_to_face_range(face_is_selected);
+        if (disallow_surface_crossing){
+            Allow_no_surface_crossing shall_move(mesh);
+            PMP::isotropic_remeshing(faces_to_remesh, target_edge_length, mesh, make_np().allow_move_functor(shall_move));
+        }
+        else
+            PMP::isotropic_remeshing(faces_to_remesh, target_edge_length, mesh, make_np());
+    }
+
+    // explicit garbage collection needed as vertices are only *marked* as removed
+    //
+    //   https://github.com/CGAL/cgal/discussions/6625
+    //   https://doc.cgal.org/latest/Surface_mesh/index.html#sectionSurfaceMesh_memory
+    mesh.collect_garbage();
+
+    auto out = cortech::extract_vertices_and_faces(mesh);
+
+    auto orig_v_id = vertex_property_map_to_vector(mesh, "v:original_id");
+    auto orig_f_id = face_property_map_to_vector(mesh, "f:original_id");
+    auto out_face_id = face_property_map_to_vector(mesh, "f:patch_id");
+
+    return {out.vertices, out.faces, out_face_id, orig_v_id, orig_f_id};
+}
+
+
+vector<int> pmp_non_manifold_vertices(
+    vector<vector<float>> vertices,
+    vector<vector<int>> faces)
+{
+    Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces, false);
+
+    vector<Halfedge_index> out;
+    PMP::non_manifold_vertices(mesh, std::back_inserter(out));
+
+    vector<int> non_manifold_vertices;
+    non_manifold_vertices.reserve(out.size());
+    for (Halfedge_index h : out)
+        non_manifold_vertices.push_back(static_cast<int>(mesh.target(h).idx()));
+    return non_manifold_vertices;
 }
 
 cortech::SurfaceMesh pmp_merge_duplicate_points_in_polygon_soup(
@@ -871,7 +1011,6 @@ cortech::SurfaceMesh pmp_merge_duplicate_polygons_in_polygon_soup(
     vector<vector<float>> vertices_out = cortech::point3_to_vertices(points);
     return {vertices_out, faces};
 }
-
 
 cortech::SurfaceMesh pmp_orient(
     vector<vector<float>> vertices,
@@ -976,12 +1115,16 @@ cortech::SurfaceMeshWithPMaps pmp_remove_self_intersections(
     Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces);
     add_property_map_face_id(mesh);
     add_property_map_vertex_id(mesh);
+    bool success;
     if (face_is_selected.empty())
-        PMP::experimental::remove_self_intersections(mesh.faces(), mesh);
+        success = PMP::experimental::remove_self_intersections(mesh.faces(), mesh);
     else {
         auto face_range = index_vector_to_face_range(face_is_selected);
-        PMP::experimental::remove_self_intersections(face_range, mesh);
+        success = PMP::experimental::remove_self_intersections(face_range, mesh);
     }
+    if (!success)
+        throw std::runtime_error("Failed to remove all self-intersections");
+
     mesh.collect_garbage();
     auto v_orig_id = vertex_property_map_to_vector(mesh, "v:original_id");
     auto f_orig_id = face_property_map_to_vector(mesh, "f:original_id");
@@ -1300,7 +1443,7 @@ vector<vector<float>> pmp_smooth_shape_by_curvature_threshold(
 
     // PMP::orient(mesh); // ensure outwards pointing normals
 
-    for (int i = 0; i < nb_iterations; i++)
+    for (std::size_t i = 0; i < nb_iterations; i++)
     {
         PMP::interpolated_corrected_curvatures(
             mesh,

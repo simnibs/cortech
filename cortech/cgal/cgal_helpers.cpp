@@ -23,12 +23,15 @@ namespace cortech {
 // Build Surface_mesh manually and return the index to Vertex_index mapping
 std::pair<Surface_mesh, vector<Vertex_index>> from_polygon_soup_with_vertex_map(
     const vector<vector<float>> &vertices,
-    const vector<vector<int>> &faces)
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
 {
     Surface_mesh mesh;
-    bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
-    if (!is_valid_mesh)
-        throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
     int n_vertices = vertices.size();
     int n_faces = faces.size();
 
@@ -49,13 +52,15 @@ std::pair<Surface_mesh, vector<Vertex_index>> from_polygon_soup_with_vertex_map(
 
 std::tuple<Surface_mesh, vector<Vertex_index>, vector<Face_index>> from_polygon_soup_with_vertex_and_face_map(
     const vector<vector<float>> &vertices,
-    const vector<vector<int>> &faces)
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
 {
     Surface_mesh mesh;
-    bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
-    if (!is_valid_mesh)
-        throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
-
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
     vector<Vertex_index> v2v; // index to Vertex_index
     v2v.reserve(vertices.size());
     for (auto v : vertices)
@@ -77,12 +82,15 @@ std::tuple<Surface_mesh, vector<Vertex_index>, vector<Face_index>> from_polygon_
 
 Surface_mesh from_polygon_soup(
     const vector<vector<float>> &vertices,
-    const vector<vector<int>> &faces)
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
 {
     Surface_mesh mesh;
-    bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
-    if (!is_valid_mesh)
-        throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
     auto points = vertices_to_point3(vertices);
     CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points, faces, mesh);
     return mesh;
@@ -90,12 +98,15 @@ Surface_mesh from_polygon_soup(
 
 Surface_mesh from_polygon_soup(
     const vector<Point_3> &points,
-    const vector<vector<int>> &faces)
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
 {
     Surface_mesh mesh;
-    bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
-    if (!is_valid_mesh)
-        throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
     CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points, faces, mesh);
     return mesh;
 }

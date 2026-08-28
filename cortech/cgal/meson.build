@@ -15,7 +15,7 @@ cpp_cgal_macros = [
 # and source files
 cgal_helpers_dep = declare_dependency(
     # include_directories: include_directories('.'),
-    sources: 'cgal_helpers.cpp',
+sources: 'cgal_helpers.cpp',
 )
 
 aabb_tree = python.extension_module(
@@ -46,14 +46,13 @@ alpha_wrap_3 = python.extension_module(
 # )
 
 pmp = python.extension_module(
-    'cgal_boost',
-    cython_gen_cpp.process('cgal_boost.pyx'),
+    'boost_graph',
+    cython_gen_cpp.process('boost_graph.pyx'),
     cpp_args: [cpp_cgal_macros],
     dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep], # ceres_dep
     install: true,
     subdir: cgal_dir,
 )
-
 
 convex_hull_3 = python.extension_module(
     'convex_hull_3',

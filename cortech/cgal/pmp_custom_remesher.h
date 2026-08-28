@@ -1,15 +1,5 @@
-// Copyright (c) 2015 GeometryFactory (France).
-// All rights reserved.
-//
-// This file is part of CGAL (www.cgal.org).
-//
-// $URL$
-// $Id$
-// SPDX-License-Identifier: GPL-3.0-or-later OR LicenseRef-Commercial
-//
-//
-// Author(s)     : Jane Tournois
-
+// adapted from CGAL's remesh_impl.h
+// Author: Jesper Duemose Nielsen
 
 #include <CGAL/license/Polygon_mesh_processing/meshing_hole_filling.h>
 
@@ -149,302 +139,188 @@ namespace internal {
     template<typename FaceRange>
     void init_remeshing(const FaceRange& face_range)
     {
-      tag_halfedges_status(face_range); //called first
+        tag_halfedges_status(face_range); //called first
 
-      for(face_descriptor f : face_range)
-      {
-        CGAL_assertion(is_triangle(halfedge(f, mesh_), mesh_));
-        if(is_degenerate_triangle_face(f, mesh_, parameters::vertex_point_map(vpmap_)
-                                                            .geom_traits(gt_)))
-          continue;
+        for(face_descriptor f : face_range)
+        {
+            CGAL_assertion(is_triangle(halfedge(f, mesh_), mesh_));
+            if(is_degenerate_triangle_face(f, mesh_, parameters::vertex_point_map(vpmap_)
+                                                                .geom_traits(gt_)))
+                continue;
 
-        Patch_id pid = get_patch_id(f);
-        input_triangles_.push_back(triangle(f));
-        input_patch_ids_.push_back(pid);
-        std::pair<typename Patch_id_to_index_map::iterator, bool>
-          res = patch_id_to_index_map.insert(std::make_pair(pid,0));
-        if(res.second){
-          res.first->second =  patch_id_to_index_map.size()-1;
+            Patch_id pid = get_patch_id(f);
+            input_triangles_.push_back(triangle(f));
+            input_patch_ids_.push_back(pid);
+            std::pair<typename Patch_id_to_index_map::iterator, bool>
+                res = patch_id_to_index_map.insert(std::make_pair(pid,0));
+            if(res.second)
+                res.first->second =  patch_id_to_index_map.size()-1;
         }
-      }
-      CGAL_assertion(input_triangles_.size() == input_patch_ids_.size());
+        CGAL_assertion(input_triangles_.size() == input_patch_ids_.size());
 
-      if (!build_tree_)
-        return;
-      trees.resize(patch_id_to_index_map.size());
-      for(std::size_t i=0; i < trees.size(); ++i){
-        trees[i] = new AABB_tree();
-      }
-      typename Triangle_list::iterator it;
-      typename Patch_id_list::iterator pit;
-      for(it = input_triangles_.begin(), pit = input_patch_ids_.begin();
-          it != input_triangles_.end();
-          ++it, ++pit){
-        trees[patch_id_to_index_map[*pit]]->insert(it);
-      }
-      for(std::size_t i=0; i < trees.size(); ++i){
-        trees[i]->build();
-      }
+        if (!build_tree_)
+            return;
+        trees.resize(patch_id_to_index_map.size());
+        for(std::size_t i=0; i < trees.size(); ++i)
+            trees[i] = new AABB_tree();
+        typename Triangle_list::iterator it;
+        typename Patch_id_list::iterator pit;
+        for(it = input_triangles_.begin(), pit = input_patch_ids_.begin();
+            it != input_triangles_.end();
+            ++it, ++pit){
+            trees[patch_id_to_index_map[*pit]]->insert(it);
+        }
+        for(std::size_t i=0; i < trees.size(); ++i)
+            trees[i]->build();
     }
-
-
 
     template<typename EdgeRange>
     void split_edges(const EdgeRange& edge_range)
     {
-      //collect long edges
-      typedef std::pair<halfedge_descriptor, FT> H_and_sql;
-      std::multiset< H_and_sql, std::function<bool(H_and_sql,H_and_sql)> >
-        long_edges(
-          [](const H_and_sql& p1, const H_and_sql& p2)
-          { return p1.second > p2.second; }
+        typedef std::pair<halfedge_descriptor, FT> H_and_sql;
+        std::multiset< H_and_sql, std::function<bool(H_and_sql,H_and_sql)> >
+        edges(
+            [](const H_and_sql& p1, const H_and_sql& p2)
+            { return p1.second > p2.second; }
         );
+
         for(edge_descriptor e : edge_range)
-        long_edges.emplace(halfedge(e, mesh_), 0.0);
+            edges.emplace(halfedge(e, mesh_), 0.0);
 
-        while (!long_edges.empty())
+        while (!edges.empty())
         {
-          //the edge with longest length
-          auto eit = long_edges.begin();
-          halfedge_descriptor he = eit->first;
-          long_edges.erase(eit);
+            auto eit = edges.begin();
+            halfedge_descriptor he = eit->first;
+            edges.erase(eit);
 
-          //split edge
-          Point refinement_point = CGAL::midpoint(
+            //split edge
+            Point refinement_point = CGAL::midpoint(
             get(vpmap_, target(he, mesh_)),
             get(vpmap_, source(he, mesh_))
-          );
+            );
 
-          halfedge_descriptor hnew = CGAL::Euler::split_edge(he, mesh_);
-          // propagate the constrained status
-          put(ecmap_, edge(hnew, mesh_), get(ecmap_, edge(he, mesh_)));
-          CGAL_assertion(he == next(hnew, mesh_));
+            halfedge_descriptor hnew = CGAL::Euler::split_edge(he, mesh_);
+            // propagate the constrained status
+            put(ecmap_, edge(hnew, mesh_), get(ecmap_, edge(he, mesh_)));
+            CGAL_assertion(he == next(hnew, mesh_));
 
-          //move refinement point
-          vertex_descriptor vnew = target(hnew, mesh_);
-          put(vpmap_, vnew, refinement_point);
+            //move refinement point
+            vertex_descriptor vnew = target(hnew, mesh_);
+            put(vpmap_, vnew, refinement_point);
 
-          //check sub-edges
-        //if it was more than twice the "long" threshold, insert them
+            //insert new edges to keep triangular faces, and update edges
+            if (!is_border(hnew, mesh_))
+            {
+                Patch_id patch_id = get_patch_id(face(hnew, mesh_));
+                halfedge_descriptor hnew2 = CGAL::Euler::split_face(hnew, next(next(hnew, mesh_), mesh_), mesh_);
+                put(ecmap_, edge(hnew2, mesh_), false);
+                set_patch_id(face(hnew2, mesh_), patch_id);
+                set_patch_id(face(opposite(hnew2, mesh_), mesh_), patch_id);
+            }
 
-        //  std::optional<FT> sqlen_new = sizing.is_too_long(source(hnew, mesh_), target(hnew, mesh_), mesh_);
-        //  if(sqlen_new != std::nullopt)
-        //    long_edges.emplace(hnew, sqlen_new.value());
-
-        //  const halfedge_descriptor hnext = next(hnew, mesh_);
-        //  sqlen_new = sizing.is_too_long(source(hnext, mesh_), target(hnext, mesh_), mesh_);
-        //  if (sqlen_new != std::nullopt)
-        //    long_edges.emplace(hnext, sqlen_new.value());
-
-        //insert new edges to keep triangular faces, and update long_edges
-        if (!is_border(hnew, mesh_))
-        {
-          Patch_id patch_id = get_patch_id(face(hnew, mesh_));
-          halfedge_descriptor hnew2 = CGAL::Euler::split_face(hnew, next(next(hnew, mesh_), mesh_), mesh_);
-          put(ecmap_, edge(hnew2, mesh_), false);
-          set_patch_id(face(hnew2, mesh_), patch_id);
-          set_patch_id(face(opposite(hnew2, mesh_), mesh_), patch_id);
+            //do it again on the other side if we're not on boundary
+            halfedge_descriptor hnew_opp = opposite(hnew, mesh_);
+            if (!is_border(hnew_opp, mesh_))
+            {
+                Patch_id patch_id = get_patch_id(face(hnew_opp, mesh_));
+                halfedge_descriptor hnew2 = CGAL::Euler::split_face(prev(hnew_opp, mesh_), next(hnew_opp, mesh_), mesh_);
+                put(ecmap_, edge(hnew2, mesh_), false);
+                set_patch_id(face(hnew2, mesh_), patch_id);
+                set_patch_id(face(opposite(hnew2, mesh_), mesh_), patch_id);
+            }
         }
-
-        //do it again on the other side if we're not on boundary
-        halfedge_descriptor hnew_opp = opposite(hnew, mesh_);
-        if (!is_border(hnew_opp, mesh_))
-        {
-          Patch_id patch_id = get_patch_id(face(hnew_opp, mesh_));
-          halfedge_descriptor hnew2 = CGAL::Euler::split_face(prev(hnew_opp, mesh_), next(hnew_opp, mesh_), mesh_);
-          put(ecmap_, edge(hnew2, mesh_), false);
-          set_patch_id(face(hnew2, mesh_), patch_id);
-          set_patch_id(face(opposite(hnew2, mesh_), mesh_), patch_id);
-        }
-      }
     }
 
     template<typename EdgeRange>
     void flip_edges(const EdgeRange& edge_range){
+        for (edge_descriptor e : edge_range){
+          //only the patch edges are allowed to be flipped
+          if (!is_flip_allowed(e))
+              throw std::runtime_error("Edge cannot be flipped");
 
-      for (edge_descriptor e : edge_range){
-            //only the patch edges are allowed to be flipped
-        if (!is_flip_allowed(e))
-        throw std::runtime_error("Edge cannot be flipped");
+          //add geometric test to avoid axe cuts
+          // if (!internal::should_flip(e, mesh_, vpmap_, gt_))
+          // throw std::runtime_error("Edge cannot be flipped (axe cut)");
 
-        //add geometric test to avoid axe cuts
-        // if (!internal::should_flip(e, mesh_, vpmap_, gt_))
-        // throw std::runtime_error("Edge cannot be flipped (axe cut)");
+          halfedge_descriptor he = halfedge(e, mesh_);
 
-        halfedge_descriptor he = halfedge(e, mesh_);
+          CGAL_assertion( is_flip_topologically_allowed(edge(he, mesh_)) );
+          CGAL_assertion( !get(ecmap_, edge(he, mesh_)) );
 
-        CGAL_assertion( is_flip_topologically_allowed(edge(he, mesh_)) );
-        CGAL_assertion( !get(ecmap_, edge(he, mesh_)) );
+          CGAL::Euler::flip_edge(he, mesh_);
 
-        CGAL::Euler::flip_edge(he, mesh_);
-
-        Patch_id pid = get_patch_id(face(he, mesh_));
-        set_patch_id(face(he, mesh_), pid);
-        set_patch_id(face(opposite(he, mesh_), mesh_), pid);
-      }
+          Patch_id pid = get_patch_id(face(he, mesh_));
+          set_patch_id(face(he, mesh_), pid);
+          set_patch_id(face(opposite(he, mesh_), mesh_), pid);
+        }
     }
-
 
     template<typename HalfedgeRange>
     void collapse_halfedges(const HalfedgeRange& halfedge_range)
     {
-      typedef boost::bimap<
-      boost::bimaps::set_of<halfedge_descriptor>,
-      boost::bimaps::multiset_of<FT, std::less<FT> > >          Boost_bimap;
-      typedef typename Boost_bimap::value_type                    short_edge;
+        typedef boost::bimap<
+        boost::bimaps::set_of<halfedge_descriptor>,
+        boost::bimaps::multiset_of<FT, std::less<FT> > >          Boost_bimap;
 
-      bool collapse_constraints = true;
-      Boost_bimap halfedge_bimap;
-      // std::set<halfedge_descriptor> halfedge_set;
+        bool collapse_constraints = true;
+        Boost_bimap halfedge_bimap;
 
-      std::queue<halfedge_descriptor> halfedge_set;
-      halfedge_set = halfedge_range;
-    // int i = 0;
-    // for(halfedge_descriptor h : halfedge_range)
-    // {
-    //   if(is_collapse_allowed(edge(h,mesh_), collapse_constraints))
-    //     // halfedge_bimap.insert(short_edge(h, 0.0));
-    //           // halfedge_set.insert(h);
-    //           halfedge_set.push(h);
-    //    else
-    //           throw std::runtime_error("Edge cannot be collapsed");
-    //   }
+        std::queue<halfedge_descriptor> halfedge_queue;
+        halfedge_queue = halfedge_range;
 
-      while (!halfedge_set.empty())
-      {
-        // typename Boost_bimap::right_map::iterator eit = halfedge_bimap.right.begin();
-        // halfedge_descriptor he = eit->second;
-        // halfedge_bimap.right.erase(eit);
-
-          halfedge_descriptor he = halfedge_set.front();
-
-        // halfedge_descriptor he = *halfedge_set.begin();
-        // halfedge_set.erase(he);
-
-        edge_descriptor e = edge(he, mesh_);
-
-        if (!is_collapse_allowed(e, collapse_constraints))
-        //situation could have changed since it was added to the bimap
-        throw std::runtime_error("Edge cannot be collapsed");
-
-        //let's try to collapse he into vb
-        vertex_descriptor va = source(he, mesh_);
-        vertex_descriptor vb = target(he, mesh_);
-
-      //   auto pmap = mesh_.template property_map<vertex_descriptor, int>;
-      // pmap = mesh_.property_map<vertex_descriptor, int>("v:original_id");
-      // auto pmap = mesh_.property_map<vertex_descriptor, int>("v:original_id").first;
-      // auto pmap_value = pmap.value();
-
-        // std::cout << (int)va << " -> " <<(int)vb << std::endl;
-        // Point pp;
-        // pp = get(vpmap_, va);
-        //   std::cout << "va : " << pp.x() << " " << pp.y() << " " << pp.z() << std::endl;
-        // pp = get(vpmap_, vb);
-        //   std::cout << "vb : " << pp.x() << " " << pp.y() << " " << pp.z() << std::endl;
-
-        /*
-
-        Handle this case
-
-              vd
-             /|\
-            / | \
-           /  |  \
-          /  vc   \
-         /  /   \  \
-        / /        \\
-       va ---------- vb
-
-       */
-
-
-
-        if (!CGAL::Euler::does_satisfy_link_condition(e, mesh_))//necessary to collapse
+        while (!halfedge_queue.empty())
         {
-          std::cout << "link condition not satisfied..." << std::endl;
+            halfedge_descriptor he = halfedge_queue.front();
+            edge_descriptor e = edge(he, mesh_);
+            halfedge_queue.pop();
 
-          // vertex_descriptor vc = target(next(he, mesh_), mesh_);
-          // if (mesh_.degree(vc) == 3){
-          //   std::cout << "found a vertex with degree 3" << std::endl;
-          //   for (halfedge_descriptor hc : halfedges_around_source(vc, mesh_))
-          //   {
-          //     vertex_descriptor x = target(hc, mesh_);
-          //     if ((x != va) && !(x != vb)){
-          //       // we have found vd
-          //     std::cout << "collapsing its 3rd halfedge instead of he..." << std::endl;
-          //     std::cout << (int)vc << " -> " << (int)x << std::endl;
-          //     // reinsert he...
-          //     // halfedge_bimap.insert(he);
-          //       // halfedge_bimap.insert(short_edge(he, 0.0));
+            if (!is_collapse_allowed(e, collapse_constraints))
+                //situation could have changed since it was added to the bimap
+                throw std::runtime_error("Edge cannot be collapsed");
 
-          //       he = hc;
-          //       va = vc;
-          //       vb = x;
-          //       e = edge(he, mesh_);
-          //     }
-          //   }
-          // }
-          if (!CGAL::Euler::does_satisfy_link_condition(e, mesh_)){
-            std::ostringstream oss;
-            oss << "Edge does not satisfy link condition (" << (int)va << " -> " <<(int)vb << ")";
-            throw std::runtime_error(oss.str());
-          }
+            // collapse he into vb
+            vertex_descriptor va = source(he, mesh_);
+            vertex_descriptor vb = target(he, mesh_);
+
+            if (!CGAL::Euler::does_satisfy_link_condition(e, mesh_))//necessary to collapse
+            {
+                std::ostringstream oss;
+                oss << "Edge does not satisfy link condition (" << (int)va << " -> " <<(int)vb << ")";
+                throw std::runtime_error(oss.str());
+            }
+
+            //before collapse
+            halfedge_descriptor he_opp= opposite(he, mesh_);
+            bool mesh_border_case     = is_on_border(he);
+            bool mesh_border_case_opp = is_on_border(he_opp);
+            halfedge_descriptor ep_p  = prev(he_opp, mesh_);
+            halfedge_descriptor en    = next(he, mesh_);
+            halfedge_descriptor ep    = prev(he, mesh_);
+            halfedge_descriptor en_p  = next(he_opp, mesh_);
+
+            // merge halfedge_status to keep the more important on both sides
+            //do it before collapse is performed to be sure everything is valid
+            if (!mesh_border_case)
+                merge_and_update_status(en, ep);
+            if (!mesh_border_case_opp)
+                merge_and_update_status(en_p, ep_p);
+
+            if (!protect_constraints_)
+                put(ecmap_, e, false);
+            else
+                CGAL_assertion( !get(ecmap_, e) );
+
+            //perform collapse
+            CGAL_assertion(target(halfedge(e, mesh_), mesh_) == vb);
+            vertex_descriptor vkept = CGAL::Euler::collapse_edge(e, mesh_, ecmap_);
+            CGAL_assertion(is_valid(mesh_));
+            CGAL_assertion(vkept == vb);//is the constrained point still here
+
+            //fix constrained case
+            CGAL_assertion((is_constrained(vkept) || is_corner(vkept) || is_on_patch_border(vkept)) ==
+                            (is_va_constrained || is_vb_constrained || is_va_on_constrained_polyline || is_vb_on_constrained_polyline));
+            //  fix_degenerate_faces(vkept, halfedge_bimap, collapse_constraints);
         }
-        halfedge_set.pop();
-
-       //before collapse
-       halfedge_descriptor he_opp= opposite(he, mesh_);
-       bool mesh_border_case     = is_on_border(he);
-       bool mesh_border_case_opp = is_on_border(he_opp);
-       halfedge_descriptor ep_p  = prev(he_opp, mesh_);
-       halfedge_descriptor en    = next(he, mesh_);
-       halfedge_descriptor ep    = prev(he, mesh_);
-       halfedge_descriptor en_p  = next(he_opp, mesh_);
-
-       // merge halfedge_status to keep the more important on both sides
-       //do it before collapse is performed to be sure everything is valid
-       if (!mesh_border_case)
-       merge_and_update_status(en, ep);
-       if (!mesh_border_case_opp)
-       merge_and_update_status(en_p, ep_p);
-
-       if (!protect_constraints_)
-       put(ecmap_, e, false);
-       else
-       CGAL_assertion( !get(ecmap_, e) );
-
-       // std::unordered_set<halfedge_descriptor> prev_h;
-       // for (halfedge_descriptor ht : halfedges_around_target(vb, mesh_))
-       //        prev_h.insert(ht);
-
-       // va is the vertex which is removed
-       // vb is the vertex which is kept
-       //
-       // h_prev is the halfedge pointing to va. After the collapse, this points to vb
-       //
-       // the vertex which now points to vkept the remaining face
-
-       // halfedge_descriptor h_prev = prev(opposite(halfedge(va, mesh_), mesh_), mesh_);
-       // vertex_descriptor v_prev = source(h_prev, mesh_);
-
-       //perform collapse
-       CGAL_assertion(target(halfedge(e, mesh_), mesh_) == vb);
-       vertex_descriptor vkept = CGAL::Euler::collapse_edge(e, mesh_, ecmap_);
-       CGAL_assertion(is_valid(mesh_));
-       CGAL_assertion(vkept == vb);//is the constrained point still here
-
-      // std::cout << (int)vkept << " == " <<(int)vb << std::endl;
-      // pp = get(vpmap_, vkept);
-      //   std::cout << "vkept : " << pp.x() << " " << pp.y() << " " << pp.z() << std::endl;
-      // pp = get(vpmap_, vb);
-      //   std::cout << "vb    : " << pp.x() << " " << pp.y() << " " << pp.z() << std::endl;
-
-       //fix constrained case
-       CGAL_assertion((is_constrained(vkept) || is_corner(vkept) || is_on_patch_border(vkept)) ==
-                     (is_va_constrained || is_vb_constrained || is_va_on_constrained_polyline || is_vb_on_constrained_polyline));
-      //  fix_degenerate_faces(vkept, halfedge_bimap, collapse_constraints);
-      }
     }
 private:
   Patch_id get_patch_id(const face_descriptor& f) const

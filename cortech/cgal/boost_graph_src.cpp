@@ -1,8 +1,8 @@
 #include <vector>
+#include <algorithm>
 
 #include <CGAL/boost/graph/border.h>
-
-// #include <CGAL/boost/graph/selection.h>
+#include <CGAL/boost/graph/selection.h>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Surface_mesh.h>
@@ -19,9 +19,7 @@ using Halfedge_index = Surface_mesh::Halfedge_index;
 using Vertex_index = Surface_mesh::Vertex_index;
 
 
-
-
-vector<vector<int>> cgal_find_border_edges(
+vector<vector<int>> graph_find_border_edges(
     vector<vector<float>> vertices,
     vector<vector<int>> faces)
 {
@@ -45,8 +43,34 @@ vector<vector<int>> cgal_find_border_edges(
     return edges;
 }
 
+vector<bool> graph_expand_face_selection_for_removal(
+    vector<vector<float>> vertices,
+    vector<vector<int>> faces,
+    vector<int> selection)
+{
+    auto [mesh, v2v, f2f] = cortech::from_polygon_soup_with_vertex_and_face_map(vertices, faces);
+
+    vector<Face_index> selection_as_face_index;
+    selection_as_face_index.reserve(selection.size());
+    for (int f : selection)
+        selection_as_face_index.push_back(f2f[f]);
+
+    auto is_selected = mesh.add_property_map<Face_index, bool>("f:is_selected", false).first;
+    for (Face_index f : selection_as_face_index)
+        put(is_selected, f, true);
+
+    CGAL::expand_face_selection_for_removal(selection_as_face_index, mesh, is_selected);
+
+    vector<bool> result;
+    result.reserve(mesh.number_of_faces());
+    for (Face_index f : mesh.faces())
+        result.push_back(is_selected[f]);
+
+    return result;
+}
+
 /*
-vector<int> cgal_expand_face_selection(
+vector<int> graph_expand_face_selection(
     vector<vector<float>> vertices,
     vector<vector<int>> faces,
     vector<int> selection,
@@ -79,7 +103,7 @@ vector<int> cgal_expand_face_selection(
     return result;
 }
 
-vector<int> cgal_expand_vertex_selection(
+vector<int> graph_expand_vertex_selection(
     vector<vector<float>> vertices,
     vector<vector<int>> faces,
     vector<int> selection,

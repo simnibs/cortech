@@ -1,7 +1,4 @@
-from libcpp cimport bool as cppbool
 from libcpp.vector cimport vector
-from libcpp.pair cimport pair
-from typing import Union
 import numpy as np
 import numpy.typing as npt
 cimport numpy as np

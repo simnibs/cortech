@@ -1,8 +1,8 @@
 #include <array>
 #include <iostream>
 #include <vector>
-
-#include <boost/unordered_map.hpp>
+#include <unordered_set>
+#include <unordered_map>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/property_map.h>
@@ -14,6 +14,9 @@
 #include <CGAL/tetrahedron_soup_to_triangulation_3.h>
 
 #include <cgal_helpers.h>
+#include <tet_remesh_custom_sizing_field.h>
+
+#include <CGAL/Real_timer.h>
 
 using std::vector;
 
@@ -22,15 +25,6 @@ typedef CGAL::Tetrahedral_remeshing::Remeshing_triangulation_3<K> Remeshing_tria
 using Tr = Remeshing_triangulation;
 using Vertex_handle = Tr::Vertex_handle;
 
-// edges
-// using Vertex_pair = std::pair<Vertex_handle, Vertex_handle>;
-// using Constraints_set = bbost::unordered_set<Vertex_pair, boost::hash<Vertex_pair>>;
-// using Constraints_pmap = CGAL::Boolean_property_map<Constraints_set>;
-
-// facets
-// using Facet = std::array<Vertex_handle, Vertex_handle, Vertex_handle;
-// using Constraints_set = bbost::unordered_set<Facet, boost::hash<Vertex_pair>>;
-// using Constraints_pmap = CGAL::Boolean_property_map<Constraints_set>;
 
 template <class Tr, typename PointRange>
 void build_vertices(Tr &tr,
@@ -331,6 +325,83 @@ std::pair<vector<vector<int>>, vector<int>> c3t3_get_cells(
     return std::make_pair(cells, cells_id);
 }
 
+
+
+// // Get facets (triangles)
+// template <typename C3T3>
+// std::pair<vector<vector<int>>, vector<int>> c3t3_get_facets(
+//     const C3T3 &c3t3,
+//     boost::unordered_map<typename C3T3::Vertex_handle, int> vertex_to_index)
+// {
+//     int i, j;
+
+//     const auto &tr = c3t3.triangulation();
+
+//     bool print_each_facet_twice = false;
+
+//     int n_facets = c3t3.number_of_facets_in_complex();
+//     if (print_each_facet_twice)
+//         n_facets += n_facets;
+//     vector<vector<int>> facets;
+//     vector<int> facet_vertex_id(3);
+//     vector<int> facets_id;
+//     for (auto f : tr.finite_facets())
+//     {
+//         facets_id.push_back(c3t3.surface_patch_index(f));
+//         // Apply priority among subdomains, to get consistent facet orientation per subdomain-pair interface.
+//         if (print_each_facet_twice)
+//         {
+//             auto mirror_facet = tr.mirror_facet(f);
+//             [[maybe_unused]] auto [c2, _] = mirror_facet;
+//         }
+
+//         // Get facet vertices in CCW order.
+//         j = 0;
+//         for (auto v : tr.vertices(f))
+//             facet_vertex_id[j] = vertex_to_index[v];
+//         facets.pushback(facet_vertex_id);
+
+//         // Print triangle again if needed, with opposite orientation
+//         if (print_each_facet_twice)
+//         {
+//             for (auto v : tr.vertices(f))
+//                 facet_vertex_id[j--] = vertex_to_index[v];
+//             facets.pushback(facet_vertex_id);
+//         }
+//     }
+//     return std::make_pair(facets, facets_id);
+// }
+
+
+// template <typename C3T3>
+// std::pair<vector<vector<int>>, vector<int>> c3t3_get_all_cells(
+//     const C3T3 &c3t3,
+//     boost::unordered_map<typename C3T3::Vertex_handle, int> vertex_to_index)
+// {
+//     // Get cells (tetrahedra)
+//     const auto &tr = c3t3.triangulation();
+
+//     // tr.number_of_cells()                 domain cells, infinite cells, facets
+//     // tr.number_of_finite_cells()          domain cells, infinite cells
+//     // c3t3.number_of_cells_in_complex()    domain cells
+//     int n_cells = tr.number_of_finite_cells();
+//     vector<vector<int>> cells;
+//     vector<int> cells_id;
+//     vector<int> cell_vertex_id(4);
+//     // cells.reverse(n_cells);
+//     int j;
+//     for (auto c : tr.all_cell_handles()) // iterator over cell *handles*
+//     {
+//         j = 0;
+//         for (auto v : tr.vertices(c))
+//             cell_vertex_id[j++] = vertex_to_index[v];
+//         cells.push_back(cell_vertex_id);
+//         cells_id.push_back(c3t3.subdomain_index(c));
+//     }
+//     return std::make_pair(cells, cells_id);
+// }
+
+
 template <typename C3T3>
 cortech::VolumeMeshWithPMaps c3t3_get_all(const C3T3 &c3t3)
 {
@@ -367,6 +438,24 @@ cortech::VolumeMeshWithPMaps c3t3_get_all(const C3T3 &c3t3)
     return {vertices, facets, cells, facets_id, cells_id};
 }
 
+template <typename C3T3>
+cortech::VolumeMeshWithPMaps c3t3_get_all_in_triangulation_3(const C3T3 &c3t3)
+{
+    auto vp = c3t3_get_vertices(c3t3);
+    auto vertices = vp.first;
+    auto vertex_to_index = vp.second;
+
+    auto fp = c3t3_get_all_facets(c3t3, vertex_to_index);
+    auto facets = fp.first;
+    auto facets_id = fp.second;
+
+    auto cp = c3t3_get_all_cells(c3t3, vertex_to_index);
+    auto cells = cp.first;
+    auto cells_id = cp.second;
+
+    return {vertices, facets, cells, facets_id, cells_id};
+}
+
 // template <typename Tr>
 // struct Facets_pmap
 // {
@@ -392,13 +481,11 @@ cortech::VolumeMeshWithPMaps c3t3_get_all(const C3T3 &c3t3)
 // };
 
 cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh(
-    vector<vector<float>> vertices,
+    vector<vector<double>> vertices,
     vector<vector<int>> faces,
     vector<vector<int>> cells,
     vector<int> faces_pmap,
     vector<int> cells_pmap,
-    vector<vector<int>> constrained_edges = {},
-    // const vector<vector<int>> constrained_faces = {},
     std::string sizing_field_type = "uniform",
     float target_edge_length = 1.0,
     bool remesh_boundaries = true,
@@ -407,50 +494,74 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh(
 {
     // vector<bool> cell_is_selected(vertices.size(), true);
     // vector<vector<int>> edge_is_constrained;
-    // bool smooth_constrained_edges = false;
 
     vector<Tr::Point> points(vertices.size());
+    // --- collect the outer-boundary vertices/edges/facets once, before remeshing ---
     int i = 0;
     for (auto v : vertices)
-    {
-        points[i] = Tr::Point(v[0], v[1], v[2]);
-        ++i;
-    }
+        points[i++] = Tr::Point(v[0], v[1], v[2]);
 
-    using Surface_patch_index = typename Tr::Cell::Surface_patch_index;
-    using Facet = std::array<int, 3>; // 3 = id
-    Facet f;
-    boost::unordered_map<Facet, Surface_patch_index> border_facets(faces.size());
-    for (std::size_t i = 0; i < faces.size(); ++i)
-    {
-        auto &tmp = faces[i];
-        f[0] = tmp[0];
-        f[1] = tmp[1];
-        f[2] = tmp[2];
-        std::sort(f.begin(), f.end());
-        border_facets.emplace(f, static_cast<Surface_patch_index>(faces_pmap[i]));
-    }
+    // using Surface_patch_index = typename Tr::Cell::Surface_patch_index;
+    // using Facet = std::array<int, 3>; // 3 = id
+    // Facet f;
+    // boost::unordered_map<Facet, Surface_patch_index> border_facets(faces.size());
+    // for (std::size_t i = 0; i < faces.size(); i++)
+    // {
+    //     auto &tmp = faces[i];
+    //     f[0] = tmp[0];
+    //     f[1] = tmp[1];
+    //     f[2] = tmp[2];
+    //     std::sort(f.begin(), f.end());
+    //     border_facets.emplace(f, static_cast<Surface_patch_index>(faces_pmap[i]));
+    // }
 
     Tr tr = CGAL::tetrahedron_soup_to_triangulation_3<Tr>(
         points, cells,
-        CGAL::parameters::surface_facets(border_facets).subdomain_indices(std::cref(cells_pmap)));
+        // CGAL::parameters::surface_facets(border_facets)
+        // .subdomain_indices(std::cref(cells_pmap)));
+        CGAL::parameters::subdomain_indices(std::cref(cells_pmap)));
 
-    boost::unordered_map<std::size_t, Vertex_handle> vertex_mapper(tr.number_of_vertices());
-    i = 0;
-    for (Vertex_handle vh : tr.finite_vertex_handles())
+    // I think is_valid is also called as part of c3t3.set_triangulation()
+    if (check_triangulation)
     {
-        vertex_mapper[i] = vh;
+        std::cout << "Checking triangulation... " << std::endl;
+        if (!tr.is_valid(true))
+        {
+            for (auto c : tr.all_cell_handles())
+            {
+                if (!tr.tds().is_valid(c))
+                {
+                    std::cerr << "invalid cell " << CGAL::IO::oformat(c) << std::endl;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        Tr::Cell_handle n = c->neighbor(j);
+                        if (n == Tr::Cell_handle() || tr.tds().cells().is_used(n) == false)
+                            std::cerr << "\tneighbor " << j << " == nullptr " << std::endl;
+                    }
+                    std::cerr << "with vertices" << std::endl;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        Tr::Vertex_handle vh = c->vertex(j);
+                        Tr::Point p = vh->point();
+                        std::cout << "\t[" << p.x() << ", " << p.y() << ", " << p.z() << "]," << std::endl;
+                    }
+                }
+            }
+        }
     }
 
-    // edge constraints
-    using Vertex_pair = std::pair<Vertex_handle, Vertex_handle>;
-    using Constraints_set = std::unordered_set<Vertex_pair, boost::hash<Vertex_pair>>;
-    using Constraints_pmap = CGAL::Boolean_property_map<Constraints_set>;
-    Constraints_set constraints;
-    for (auto e : constrained_edges)
-    {
-        constraints.emplace(CGAL::make_sorted_pair(vertex_mapper[e[0]], vertex_mapper[e[1]]));
-    }
+    // boost::unordered_map<std::size_t, Vertex_handle> vertex_mapper(tr.number_of_vertices());
+    // i = 0;
+    // for (Vertex_handle vh : tr.finite_vertex_handles())
+    //     vertex_mapper[i++] = vh;
+
+    // // edge constraints
+    // using Vertex_pair = std::pair<Vertex_handle, Vertex_handle>;
+    // using Constraints_set = std::unordered_set<Vertex_pair, boost::hash<Vertex_pair>>;
+    // using Constraints_pmap = CGAL::Boolean_property_map<Constraints_set>;
+    // Constraints_set constraints;
+    // for (auto e : constrained_edges)
+    //     constraints.emplace(CGAL::make_sorted_pair(vertex_mapper[e[0]], vertex_mapper[e[1]]));
 
     // using Constraints_set = std::unordered_set<Tr::Facet, boost::hash<Tr::Facet>>;
     // using Constraints_pmap = CGAL::Boolean_property_map<Constraints_set>;
@@ -471,10 +582,10 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh(
     // std::cout << CGAL::IO::oformat(patch_id) << std::endl;
     // if (patch_id > 2)
     // {
-    //     std::cout << patch_id << std::endl;
-    //     //     std::cout << "constraining facet " << counter << std::endl;
-    //     //     ++counter;
-    //     //     put(fc_map, f, true);
+    //     // std::cout << patch_id << std::endl;
+    //     std::cout << "constraining facet " << counter << std::endl;
+    //     ++counter;
+    //     put(fc_map, f, true);
     // }
     // }
 
@@ -489,94 +600,64 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh(
     // }
     // Facets_pmap<Tr> facets_pmap(constrained_facets_map);
 
-    // I think is_valid is also called as part of c3t3.set_triangulation()
-    if (check_triangulation)
-    {
-        std::cout << "Checking triangulation... " << std::endl;
-        if (!tr.is_valid(true))
-        {
-            i = 0;
-            for (auto c : tr.all_cell_handles())
-            {
-                if (!tr.tds().is_valid(c))
-                {
-                    std::cerr << "invalid cell " << CGAL::IO::oformat(c) << std::endl;
-                    for (int j = 0; j < 4; j++)
-                    {
-                        Tr::Cell_handle n = c->neighbor(j);
-                        if (n == Tr::Cell_handle() || tr.tds().cells().is_used(n) == false)
-                        {
-                            std::cerr << "\tneighbor " << j << " == nullptr " << std::endl;
-                        }
-                    }
-                    std::cerr << "with vertices" << std::endl;
-                    for (int j = 0; j < 4; ++j)
-                    {
-                        Tr::Vertex_handle vh = c->vertex(j);
-                        Tr::Point p = vh->point();
-                        std::cout << "\t[" << p.x() << ", " << p.y() << ", " << p.z() << "]," << std::endl;
-                    }
-                }
-                ++i;
-            }
-        }
-    }
 
     std::cout << "number of vertices     : " << tr.number_of_vertices() << std::endl;
     std::cout << "number of faces        : " << tr.number_of_facets() << " " << tr.number_of_finite_facets() << std::endl;
     std::cout << "number of finite cells : " << tr.number_of_cells() << " " << tr.number_of_finite_cells() << std::endl;
 
-    std::cout << "remeshing ..." << std::endl;
-
     using C3t3 = CGAL::Mesh_complex_3_in_triangulation_3<Tr, int, int>;
     C3t3 c3t3;
-    c3t3.set_triangulation(tr);
+    // c3t3.set_triangulation(tr);
 
-    // this modifies the underlying tr of c3t3
-    if (faces.size() > 0)
-    {
-        // create a vertex handle to vertex index mapping
-        boost::unordered_map<Tr::Vertex_handle, int> vh_to_index;
-        i = 0;
-        for (Tr::Vertex_handle vh : tr.finite_vertex_handles())
-        {
-            vh_to_index[vh] = i++; // post increment
-        }
+    // // this modifies the underlying tr of c3t3
+    // if (faces.size() > 0)
+    // {
+    //     // create a vertex handle to vertex index mapping
+    //     boost::unordered_map<Tr::Vertex_handle, int> vh_to_index;
+    //     i = 0;
+    //     for (Tr::Vertex_handle vh : tr.finite_vertex_handles())
+    //         vh_to_index[vh] = i++; // post increment
 
-        // find the surface facets in triangulation (where finite_facets
-        // enumerates all cell facets)
-        Facet f_index;
-        for (Tr::Facet f : tr.finite_facets())
-        {
-            Tr::Cell_handle c = f.first; // cell handle
-            int index = f.second;        // index of face in cell
-            if ((index & 1) == 0)        // even
-            {
-                f_index[0] = vh_to_index[c->vertex((index + 2) & 3)]; // & 3 does % 4
-                f_index[1] = vh_to_index[c->vertex((index + 1) & 3)];
-                f_index[2] = vh_to_index[c->vertex((index + 3) & 3)];
-            }
-            else
-            {
-                f_index[0] = vh_to_index[c->vertex((index + 1) & 3)];
-                f_index[1] = vh_to_index[c->vertex((index + 2) & 3)];
-                f_index[2] = vh_to_index[c->vertex((index + 3) & 3)];
-            }
-            std::sort(f_index.begin(), f_index.end());
+    //     // find the surface facets in triangulation (where finite_facets
+    //     // enumerates all cell facets)
+    //     Facet f_index;
+    //     for (Tr::Facet f : tr.finite_facets())
+    //     {
+    //         Tr::Cell_handle c = f.first; // cell handle
+    //         int index = f.second;        // index of face in cell
+    //         if ((index & 1) == 0)        // even
+    //         {
+    //             f_index[0] = vh_to_index[c->vertex((index + 2) & 3)]; // & 3 does % 4
+    //             f_index[1] = vh_to_index[c->vertex((index + 1) & 3)];
+    //             f_index[2] = vh_to_index[c->vertex((index + 3) & 3)];
+    //         }
+    //         else
+    //         {
+    //             f_index[0] = vh_to_index[c->vertex((index + 1) & 3)];
+    //             f_index[1] = vh_to_index[c->vertex((index + 2) & 3)];
+    //             f_index[2] = vh_to_index[c->vertex((index + 3) & 3)];
+    //         }
+    //         std::sort(f_index.begin(), f_index.end());
 
-            auto it = border_facets.find(f_index);
-            if (it != border_facets.end()) // exists
-            {
-                // std::cout << "found a facet with index " << it->second << std::endl;
-                c3t3.add_to_complex(f, Tr::Cell::Surface_patch_index(it->second));
-            }
-        }
-    }
+    //         auto it = border_facets.find(f_index);
+    //         if (it != border_facets.end()) // exists
+    //         {
+    //             // std::cout << "found a facet with index " << it->second << std::endl;
+    //             c3t3.add_to_complex(f, Tr::Cell::Surface_patch_index(it->second));
+    //         }
+    //     }
+    // }
 
-    std::cout << "number of explicit facets " << faces.size() << std::endl;
-    std::cout << "number of facets in complex c3t3 : " << c3t3.number_of_facets_in_complex() << std::endl;
+    // std::cout << "number of explicit facets " << faces.size() << std::endl;
+    // std::cout << "number of facets in complex c3t3 : " << c3t3.number_of_facets_in_complex() << std::endl;
+
+    std::cout << "remesh boundaries? " << remesh_boundaries << std::endl;
+    std::cout << "check triangulation? " << check_triangulation << std::endl;
+
+    std::cout << "remeshing ..." << std::endl;
 
     // CGAL::parameters np = CGAL::parameters::remesh_boundaries(remesh_boundaries).number_of_iterations(n_iterations);
+
     if (sizing_field_type == "uniform")
     {
         std::cout << "sizing field: uniform = " << target_edge_length << std::endl;
@@ -585,7 +666,10 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh(
             tr,
             target_edge_length,
             // CGAL::parameters::remesh_boundaries(remesh_boundaries).number_of_iterations(n_iterations) /*.facet_is_constrained_map(fc_map)*/);
-            CGAL::parameters::remesh_boundaries(remesh_boundaries).number_of_iterations(n_iterations).edge_is_constrained_map(Constraints_pmap(constraints)));
+            CGAL::parameters::remesh_boundaries(remesh_boundaries)
+                .number_of_iterations(n_iterations)
+            /*.edge_is_constrained_map(Constraints_pmap(constraints))*/
+        );
     }
     else if (sizing_field_type == "adaptive")
     {
@@ -593,9 +677,11 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh(
         CGAL::tetrahedral_isotropic_remeshing(
             tr,
             CGAL::create_adaptive_remeshing_sizing_field(tr),
-            CGAL::parameters::remesh_boundaries(remesh_boundaries).number_of_iterations(n_iterations)
+            CGAL::parameters::remesh_boundaries(remesh_boundaries)
+                .number_of_iterations(n_iterations)
             /*.facet_is_constrained_map(facets_pmap)*/);
     }
+
     // elif (sizing_field_type == "custom"){
     //     size = }
 
@@ -609,4 +695,200 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh(
     c3t3.set_triangulation(tr);
 
     return c3t3_get_all<C3t3>(c3t3);
+}
+
+bool cell_has_outer_edge(
+    Tr::Cell_handle c,
+    const std::set<std::pair<Tr::Vertex_handle, Tr::Vertex_handle>>& outer_edges)
+{
+    using EdgePair = std::pair<Tr::Vertex_handle, Tr::Vertex_handle>;
+    for (int a = 0; a < 4; ++a)
+    {
+        for (int b = a + 1; b < 4; ++b)
+        {
+            Tr::Vertex_handle va = c->vertex(a), vb = c->vertex(b);
+            EdgePair e = (va < vb) ? EdgePair(va, vb) : EdgePair(vb, va);
+            if (outer_edges.count(e))
+                return true;
+        }
+    }
+return false;
+}
+
+
+bool is_outer_boundary_facet(const Tr::Facet& f, const Tr& tr)
+{
+    Tr::Cell_handle c = f.first;
+    int i = f.second;
+    Tr::Cell_handle n = c->neighbor(i);
+    auto s1 = c->subdomain_index();
+    auto s2 = n->subdomain_index();
+    // exterior is subdomain index 0 (or an infinite cell, depending on how tr was built)
+    return (s1 == 0) != (s2 == 0);   // exactly one side is "outside"
+}
+
+cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
+    vector<vector<double>> vertices,
+    vector<vector<int>> cells,
+    vector<int> cells_pmap,
+    vector<vector<int>> faces,
+    vector<int> faces_pmap,
+    vector<double> sizing,
+    int n_iterations = 1,
+    int nb_neighbors_dim3 = 30,
+    int nb_neighbors_dim2 = 6,
+    bool check_triangulation = true)
+{
+
+    vector<Tr::Point> points;
+    points.reserve(vertices.size());
+    for (auto v : vertices){
+        points.push_back(Tr::Point(v[0], v[1], v[2]));
+    }
+
+    Tr tr;
+    if (faces.size() == 1 && faces[0].empty()){ // empty vector of vectors
+        std::cout << "NO FACES EXPLICITLY SPECIFIED" << std::endl;
+        tr = CGAL::tetrahedron_soup_to_triangulation_3<Tr>(
+            points,
+            cells,
+            CGAL::parameters::subdomain_indices(std::cref(cells_pmap))
+        );
+    } else {
+        using Surface_patch_index = typename Tr::Cell::Surface_patch_index;
+        using Facet = std::array<int, 3>; // 3 = id
+        Facet f;
+        boost::unordered_map<Facet, Surface_patch_index> facets(faces.size());
+        for (std::size_t i = 0; i < faces.size(); i++)
+        {
+            auto &tmp = faces[i];
+            f[0] = tmp[0];
+            f[1] = tmp[1];
+            f[2] = tmp[2];
+            std::sort(f.begin(), f.end());
+            facets.emplace(f, static_cast<Surface_patch_index>(faces_pmap[i]));
+        }
+        tr = CGAL::tetrahedron_soup_to_triangulation_3<Tr>(
+            points,
+            cells,
+            CGAL::parameters::subdomain_indices(std::cref(cells_pmap))
+            .surface_facets(std::cref(facets))
+        );
+    }
+
+    // Tr tr = CGAL::tetrahedron_soup_to_triangulation_3<Tr>(
+    //     points,
+    //     cells,
+    //     CGAL::parameters::subdomain_indices(std::cref(cells_pmap))
+    //     .surface_facets(std::cref(facets))
+    // );
+
+
+    // I think is_valid is also called as part of c3t3.set_triangulation()
+    if (check_triangulation)
+    {
+        // std::cout << "Checking triangulation... " << std::endl;
+        if (!tr.is_valid()) // is_valid(true) for verbose
+        {
+            std::cerr << "Invalid triangulation!" << std::endl;
+            for (auto c : tr.all_cell_handles())
+            {
+                if (!tr.tds().is_valid(c))
+                {
+                    std::cerr << "invalid cell " << CGAL::IO::oformat(c) << std::endl;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        Tr::Cell_handle n = c->neighbor(j);
+                        if (n == Tr::Cell_handle() || tr.tds().cells().is_used(n) == false)
+                            std::cerr << "\tneighbor " << j << " == nullptr " << std::endl;
+                    }
+                    std::cerr << "with vertices" << std::endl;
+                    for (int j = 0; j < 4; j++)
+                    {
+                        Tr::Vertex_handle vh = c->vertex(j);
+                        Tr::Point p = vh->point();
+                        std::cerr << "\t[" << p.x() << ", " << p.y() << ", " << p.z() << "]," << std::endl;
+                    }
+                }
+            }
+            throw std::runtime_error("Triangulation is invalid!");
+        }
+    }
+
+    using EdgePair = std::pair<Tr::Vertex_handle, Tr::Vertex_handle>;
+    using EdgeSet = std::set<EdgePair>;
+    using FacetSet = std::set<Tr::Facet>;
+    using VertexSet = std::set<Tr::Vertex_handle>;
+
+    EdgeSet outer_edges;
+    FacetSet outer_facets; // careful with facet canonicalization
+    VertexSet outer_vertices;
+    Tr::Vertex_handle vh;
+    for (auto f : tr.finite_facets())
+    {
+        if (!is_outer_boundary_facet(f, tr))
+            continue;
+
+        outer_facets.insert(f);
+
+        Tr::Cell_handle c = f.first;
+        int i = f.second;
+        for (int k = 0; k < 4; ++k)
+        {
+            if (k == i)
+                continue;
+            vh = c->vertex(k);
+            // vh->set_dimension(2);
+            // vh->set_index(vertex_index);
+            outer_vertices.insert(vh);
+        }
+
+        // the 3 edges of this facet
+        for (int a = 0; a < 4; ++a)
+            for (int b = a+1; b < 4; ++b)
+            {
+                if (a == i || b == i)
+                    continue;
+                Tr::Vertex_handle va = c->vertex(a), vb = c->vertex(b);
+                outer_edges.insert(va < vb ? EdgePair(va, vb) : EdgePair(vb, va));
+            }
+    }
+
+    CGAL::Boolean_property_map<EdgeSet> edge_pmap(outer_edges);
+    CGAL::Boolean_property_map<FacetSet> facet_pmap(outer_facets);
+    CGAL::Boolean_property_map<VertexSet> vertex_pmap(outer_vertices);
+
+    // General sizing map used for
+    using FT = Tr::Geom_traits::FT;
+    std::unordered_map<Tr::Vertex_handle, FT> size_map;
+    int i = 0;
+    for (Tr::Vertex_handle v : tr.finite_vertex_handles())
+        size_map[v] = static_cast<FT>(sizing[i++]);
+
+    // sizing map used for vertices and edges on the outer boundary
+    // since the vertices are constrained, their dimension property will be set
+    // to 0 by init_c3t3 in the Remesher
+    std::unordered_map<Tr::Vertex_handle, FT> size_map_dim_0;
+    for (Tr::Vertex_handle v : outer_vertices)
+        size_map_dim_0[v] = FT(1e6);
+
+    CGAL::Precomputed_sizing_field<Tr> sizing_field(
+        tr, size_map, size_map_dim_0, nb_neighbors_dim3, nb_neighbors_dim2
+    );
+
+    CGAL::tetrahedral_isotropic_remeshing(
+        tr,
+        sizing_field,
+        CGAL::parameters::remesh_boundaries(true)
+            .number_of_iterations(n_iterations)
+            .vertex_is_constrained_map(vertex_pmap)
+            .facet_is_constrained_map(facet_pmap)
+            .edge_is_constrained_map(edge_pmap));
+
+            using C3t3 = CGAL::Mesh_complex_3_in_triangulation_3<Tr, int, int>;
+    C3t3 c3t3;
+    c3t3.set_triangulation(tr);
+
+    return c3t3_get_all<C3t3>(c3t3);
+    // return c3t3_get_all_in_triangulation_3<C3t3>(c3t3);
 }
