@@ -232,7 +232,7 @@ namespace internal {
     }
 
     template<typename EdgeRange>
-    void flip_edges(const EdgeRange& edge_range){
+    void flip_edges(const EdgeRange& edge_range, bool allow_normal_flips = false){
         for (edge_descriptor e : edge_range){
           //only the patch edges are allowed to be flipped
           if (!is_flip_allowed(e))
@@ -249,6 +249,22 @@ namespace internal {
 
           CGAL::Euler::flip_edge(he, mesh_);
 
+          //check that mesh does not become non-triangle,
+          //nor has inverted faces
+          if (!allow_normal_flips){
+            if (!check_normals(he)
+              // || incident_to_degenerate(he)
+              // || incident_to_degenerate(opposite(he, mesh_))
+              // || !is_on_triangle(he)
+              // || !is_on_triangle(opposite(he, mesh_))
+              || !check_normals(target(he, mesh_))
+              || !check_normals(source(he, mesh_)))
+            {
+              CGAL_assertion( is_flip_topologically_allowed(edge(he, mesh_)) );
+              CGAL_assertion( !get(ecmap_, edge(he, mesh_)) );
+              CGAL::Euler::flip_edge(he, mesh_);
+            }
+          }
           Patch_id pid = get_patch_id(face(he, mesh_));
           set_patch_id(face(he, mesh_), pid);
           set_patch_id(face(opposite(he, mesh_), mesh_), pid);
@@ -258,12 +274,7 @@ namespace internal {
     template<typename HalfedgeRange>
     void collapse_halfedges(const HalfedgeRange& halfedge_range)
     {
-        typedef boost::bimap<
-        boost::bimaps::set_of<halfedge_descriptor>,
-        boost::bimaps::multiset_of<FT, std::less<FT> > >          Boost_bimap;
-
         bool collapse_constraints = true;
-        Boost_bimap halfedge_bimap;
 
         std::queue<halfedge_descriptor> halfedge_queue;
         halfedge_queue = halfedge_range;
@@ -285,7 +296,7 @@ namespace internal {
             if (!CGAL::Euler::does_satisfy_link_condition(e, mesh_))//necessary to collapse
             {
                 std::ostringstream oss;
-                oss << "Edge does not satisfy link condition (" << (int)va << " -> " <<(int)vb << ")";
+                oss << "Edge does not satisfy link condition (" << va.idx() << " -> " << vb.idx() << ")";
                 throw std::runtime_error(oss.str());
             }
 
@@ -317,9 +328,11 @@ namespace internal {
             CGAL_assertion(vkept == vb);//is the constrained point still here
 
             //fix constrained case
-            CGAL_assertion((is_constrained(vkept) || is_corner(vkept) || is_on_patch_border(vkept)) ==
-                            (is_va_constrained || is_vb_constrained || is_va_on_constrained_polyline || is_vb_on_constrained_polyline));
-            //  fix_degenerate_faces(vkept, halfedge_bimap, collapse_constraints);
+            CGAL_assertion(
+              (is_constrained(vkept) || is_corner(vkept) || is_on_patch_border(vkept)) ==
+              (is_va_constrained || is_vb_constrained || is_va_on_constrained_polyline || is_vb_on_constrained_polyline)
+            );
+            fix_degenerate_faces(vkept, halfedge_queue, collapse_constraints);
         }
     }
 private:
@@ -370,6 +383,65 @@ private:
       vertex_descriptor v2  = target(next(h, mesh_), mesh_);
       vertex_descriptor v3  = target(next(next(h, mesh_), mesh_), mesh_);
       return Triangle_3(get(vpmap_, v1), get(vpmap_, v2), get(vpmap_, v3));
+    }
+
+    //check whether the normals to faces incident to v
+    //have all their 2 by 2 dot products > 0
+    bool check_normals(const vertex_descriptor& v) const
+    {
+      return check_normals(halfedges_around_target(halfedge(v, mesh_), mesh_));
+    }
+
+    template <typename HalfedgeRange>
+    bool check_normals(const HalfedgeRange& hedges) const
+    {
+      std::size_t nb_patches = patch_id_to_index_map.size();
+      //std::vector<std::optional<Vector_3> > normal_per_patch(nb_patches,std::nullopt);
+      std::vector<bool> initialized(nb_patches,false);
+      std::vector<Vector_3> normal_per_patch(nb_patches);
+
+      for(halfedge_descriptor hd : hedges)
+      {
+        Halfedge_status s = status(hd);
+
+        if(s != PATCH && s != PATCH_BORDER)
+          continue;
+
+        Vector_3 n = compute_normal(face(hd, mesh_));
+        if (n == CGAL::NULL_VECTOR) //for degenerate faces
+          continue;
+        Patch_id pid = get_patch_id(face(hd, mesh_));
+        std::size_t index = patch_id_to_index_map.at(pid);
+        //if(normal_per_patch[index]){
+        if(initialized[index]){
+          const Vector_3& vec = normal_per_patch[index];
+          double dot = to_double(n * vec);
+          if (dot <= 0.){
+            return false;
+          }
+        }
+        //normal_per_patch[index] = std::make_optional(n);
+        normal_per_patch[index] = n;
+        initialized[index] = true;
+      }
+      return true;
+    }
+
+    bool check_normals(const halfedge_descriptor& h) const
+    {
+      if (!is_on_patch(h))
+        return true;//nothing to say
+      Vector_3 n = compute_normal(face(h, mesh_));
+      Vector_3 no = compute_normal(face(opposite(h, mesh_), mesh_));
+      return n * no > 0.;
+    }
+
+    Vector_3 compute_normal(const face_descriptor& f) const
+    {
+      if (f == boost::graph_traits<PM>::null_face())
+        return CGAL::NULL_VECTOR;
+
+      return compute_face_normal(f, mesh_, parameters::vertex_point_map(vpmap_).geom_traits(gt_));
     }
 
     bool is_constrained(const edge_descriptor& e) const
@@ -734,9 +806,8 @@ private:
       CGAL::Euler::remove_face(h, mesh_);
     }
 
-    template<typename Bimap>
     bool fix_degenerate_faces(const vertex_descriptor& v,
-                              Bimap& halfedge_bimap,
+                              std::queue<halfedge_descriptor>& halfedge_queue,
                               const bool collapse_constraints)
     {
       std::unordered_set<halfedge_descriptor> degenerate_faces;
@@ -777,53 +848,53 @@ private:
             remove_border_face(h);
             break;
           }
-          vertex_descriptor vc = target(hf, mesh_);
-          vertex_descriptor va = target(next(hf, mesh_), mesh_);
-          vertex_descriptor vb = target(next(next(hf, mesh_), mesh_), mesh_);
-          Vector_3 ab(get(vpmap_,va), get(vpmap_,vb));
-          Vector_3 ac(get(vpmap_,va), get(vpmap_,vc));
-          if (ab * ac < 0)
-          {
-            halfedge_descriptor h_ab = prev(hf, mesh_);
-            halfedge_descriptor h_ca = next(hf, mesh_);
+          // vertex_descriptor vc = target(hf, mesh_);
+          // vertex_descriptor va = target(next(hf, mesh_), mesh_);
+          // vertex_descriptor vb = target(next(next(hf, mesh_), mesh_), mesh_);
+          // Vector_3 ab(get(vpmap_,va), get(vpmap_,vb));
+          // Vector_3 ac(get(vpmap_,va), get(vpmap_,vc));
+          // if (ab * ac < 0)
+          // {
+          //   halfedge_descriptor h_ab = prev(hf, mesh_);
+          //   halfedge_descriptor h_ca = next(hf, mesh_);
 
-            halfedge_bimap.left.erase(hf);
-            halfedge_bimap.left.erase(hfo);
+          //   halfedge_queue.erase(hf);
+          //   halfedge_queue.erase(hfo);
 
-            CGAL_assertion( !get(ecmap_, edge(hf, mesh_)) );
+          //   CGAL_assertion( !get(ecmap_, edge(hf, mesh_)) );
 
-            if (!is_flip_topologically_allowed(edge(hf, mesh_)))
-              continue;
+          //   if (!is_flip_topologically_allowed(edge(hf, mesh_)))
+          //     continue;
 
-            // geometric condition for flip --> do not create new degenerate face
-            vertex_descriptor vd = target(next(hfo, mesh_), mesh_);
-            if ( collinear( get(vpmap_, va), get(vpmap_, vb), get(vpmap_, vd) ) ||
-                 collinear( get(vpmap_, va), get(vpmap_, vc), get(vpmap_, vd) ) )  continue;
+          //   // geometric condition for flip --> do not create new degenerate face
+          //   vertex_descriptor vd = target(next(hfo, mesh_), mesh_);
+          //   if ( collinear( get(vpmap_, va), get(vpmap_, vb), get(vpmap_, vd) ) ||
+          //        collinear( get(vpmap_, va), get(vpmap_, vc), get(vpmap_, vd) ) )  continue;
 
-            // remove opposite face from the queue (if degenerate)
-            degenerate_faces.erase(hfo);
-            degenerate_faces.erase(next(hfo, mesh_));
-            degenerate_faces.erase(prev(hfo, mesh_));
+          //   // remove opposite face from the queue (if degenerate)
+          //   degenerate_faces.erase(hfo);
+          //   degenerate_faces.erase(next(hfo, mesh_));
+          //   degenerate_faces.erase(prev(hfo, mesh_));
 
-            CGAL::Euler::flip_edge(hf, mesh_);
-            done = true;
+          //   CGAL::Euler::flip_edge(hf, mesh_);
+          //   done = true;
 
-            //update status
-            set_status(h_ab, merge_status(h_ab, hf, hfo));
-            set_status(h_ca, merge_status(h_ca, hf, hfo));
-            if (is_on_patch(h_ca) || is_on_patch_border(h_ca))
-            {
-              set_status(hf, PATCH);
-              set_status(hfo, PATCH);
-            }
+          //   //update status
+          //   set_status(h_ab, merge_status(h_ab, hf, hfo));
+          //   set_status(h_ca, merge_status(h_ca, hf, hfo));
+          //   if (is_on_patch(h_ca) || is_on_patch_border(h_ca))
+          //   {
+          //     set_status(hf, PATCH);
+          //     set_status(hfo, PATCH);
+          //   }
 
-            //insert new edges in 'halfedge_bimap'
-            if (is_collapse_allowed(edge(hf, mesh_), collapse_constraints)){
-              halfedge_bimap.insert(typename Bimap::value_type(hf, 0.0));
-            }
+          //   // //insert new edges in 'halfedge_bimap'
+          //   // if (is_collapse_allowed(edge(hf, mesh_), collapse_constraints)){
+          //   //   halfedge_bimap.insert(typename Bimap::value_type(hf, 0.0));
+          //   // }
 
-            break;
-          }
+          //   break;
+          // }
         }
       }
       return done;
@@ -1082,6 +1153,7 @@ template<typename PolygonMesh
        >
 void flip_edges(const EdgeRange& edges
                     , PolygonMesh& pmesh
+                    , bool allow_normal_flips = false
                     , const NamedParameters& np = parameters::default_values())
 {
   typedef PolygonMesh PM;
@@ -1126,7 +1198,7 @@ void flip_edges(const EdgeRange& edges
              fimap,
              false/*need aabb_tree*/);
 
-       collapser.flip_edges(edges);
+       collapser.flip_edges(edges, allow_normal_flips);
 }
 
 }//end namespace Polygon_mesh_processing

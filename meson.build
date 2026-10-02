@@ -1,17 +1,19 @@
 project(
     'cortech',
-    'cpp', 'cython',
+    'cpp',
+    'cython',
     version: '0.1',
     meson_version: '>= 1.2',
     default_options: [
         'buildtype=debugoptimized',
         'b_ndebug=if-release',
-        'cpp_std=c++17',
+        'cpp_std=c++20',
         # let meson set appropriate flags for things it knows about
         # apply standard link-time optimizer
         'b_lto=true',
         # optimize for size (similar to setting -Os)
         'optimization=s',
+        # 'b_sanitize=address'
     ],
 )
 
@@ -57,6 +59,7 @@ add_project_arguments(cython_cpp_args, language: 'cython')
 # c++: .cpp -> .so
 cpp_args = cpp.get_supported_arguments(
     '-frounding-math',  # Disable optimizations related to float rounding
+    # '-fno-omit-frame-pointer', # use with address sanitizer
 )
 
 # if host_os == 'linux'

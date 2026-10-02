@@ -3,7 +3,6 @@
 #include <queue>
 #include <vector>
 
-
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Side_of_triangle_mesh.h>
 #include <CGAL/Surface_mesh.h>
@@ -16,6 +15,7 @@
 #include <CGAL/Polygon_mesh_processing/clip.h>
 #include <CGAL/Polygon_mesh_processing/connected_components.h>
 #include <CGAL/Polygon_mesh_processing/corefinement.h>
+#include <CGAL/Polygon_mesh_processing/detect_features.h>
 #include <CGAL/Polygon_mesh_processing/fair.h>
 #include <CGAL/Polygon_mesh_processing/interpolated_corrected_curvatures.h>
 #include <CGAL/Polygon_mesh_processing/intersection.h>
@@ -124,7 +124,11 @@ void add_property_map_face_id(Surface_mesh &mesh, std::string name = "f:original
         orig_f_id[f] = i++;
 }
 
-Surface_mesh::Property_map<Face_index, int> add_property_map_face_patch_id(Surface_mesh &mesh, vector<int> &face_id, std::string name = "f:patch_id"){
+Surface_mesh::Property_map<Face_index, int> add_property_map_face_patch_id(
+    Surface_mesh &mesh,
+    vector<int> &face_id,
+    std::string name = "f:patch_id"
+){
     auto face_patch_map = mesh.add_property_map<Face_index, int>(name, -1).first;
     if (!face_id.empty()){
         int i = 0;
@@ -165,6 +169,24 @@ std::set<Edge_index> make_edge_set(
         edge_indices.emplace(e);
     }
     return edge_indices;
+}
+
+
+vector<Edge_index> make_edge_vector(
+    const Surface_mesh &mesh,
+    const vector<vector<int>> &edges,
+    const vector<Vertex_index> &v2v)
+{
+    vector<Edge_index> container;
+    container.reserve(edges.size());
+    for (auto e : edges)
+    {
+        // find a halfedge containing the two Vertex_index
+        Halfedge_index h = mesh.halfedge(v2v[e[0]], v2v[e[1]]);
+        Edge_index ee = mesh.edge(h);
+        container.push_back(ee);
+    }
+    return container;
 }
 
 std::set<Halfedge_index> make_halfedge_set(
@@ -403,14 +425,65 @@ std::pair<vector<int>, vector<int>> pmp_connected_components(
     return {cc, cc_size};
 }
 
+struct Face_patch_visitor : public PMP::Corefinement::Default_visitor<Surface_mesh>
+    {
+    // The visitor is copied internally, so shared state must live behind a pointer.
+    //   std::shared_ptr<int> current_id = std::make_shared<int>(-1);
+    int face_id;
+    std::map<const Surface_mesh*, Surface_mesh::Property_map<Face_index, int>> p_maps;
+
+    // const Surface_mesh& m1;
+    // const Surface_mesh&* m2;
+    // Surface_mesh::Property_map<Face_index, int> id1;
+    // Surface_mesh::Property_map<Face_index, int> id2;
+    // only needed for Boolean ops
+    //   const Surface_mesh* mout = nullptr;
+    //   Surface_mesh::Property_map<Face_index, int> idout;
+
+    Face_patch_visitor(
+        Surface_mesh& m0,
+        Surface_mesh& m1,
+        Surface_mesh::Property_map<Face_index, int> p_map_0,
+        Surface_mesh::Property_map<Face_index, int> p_map_1
+    ) {
+        face_id = -1;
+        p_maps[&m0] = p_map_0;
+        p_maps[&m1] = p_map_1;
+    }
+    // Face splitting during corefinement
+    void before_subface_creations(Face_index f_split, Surface_mesh& tm)
+    {
+        face_id = p_maps[&tm][f_split];
+    }
+
+    void after_subface_created(Face_index f_new, Surface_mesh& tm)
+    {
+        p_maps[&tm][f_new] = face_id;
+    }
+
+    void after_face_copy(Face_index f_src, Surface_mesh& tm_src,
+                        Face_index f_tgt, Surface_mesh& tm_tgt)
+    {
+        p_maps[&tm_tgt][f_tgt] = p_maps[&tm_src][f_src];
+    }
+    // Face copies into an output mesh (Boolean operations only)
+    //   void after_face_copy(Face_index f_old, const Surface_mesh& tm_old,
+    //                        Face_index f_new, const Surface_mesh& tm_new)
+    //   {
+    //     put(map_of(tm_new), f_new, get(map_of(tm_old), f_old));
+    //   }
+};
+
 std::pair<
-    std::pair<cortech::SurfaceMeshWithPMaps, cortech::SurfaceMeshWithPMaps>,
+    std::pair<cortech::SurfaceMeshWithFaceidAndPMaps, cortech::SurfaceMeshWithFaceidAndPMaps>,
     std::pair<vector<vector<int>>, vector<vector<int>>>
 > pmp_corefine(
     vector<vector<float>> v0,
     vector<vector<int>> f0,
     vector<vector<float>> v1,
     vector<vector<int>> f1,
+    vector<int> face_patch_id0,
+    vector<int> face_patch_id1,
     bool return_intersection_edges = false)
 {
     Surface_mesh m0 = cortech::from_polygon_soup(v0, f0);
@@ -422,14 +495,21 @@ std::pair<
     add_property_map_vertex_id(m0);
     add_property_map_vertex_id(m1);
 
+    auto patch_id_map0 = add_property_map_face_patch_id(m0, face_patch_id0);
+    auto patch_id_map1 = add_property_map_face_patch_id(m1, face_patch_id1);
+    Face_patch_visitor visitor(m0, m1, patch_id_map0, patch_id_map1);
+
     auto ecm0 = m0.add_property_map<Edge_index,bool>(
         "e:is_constrained", false).first;
     auto ecm1 = m1.add_property_map<Edge_index,bool>(
         "e:is_constrained", false).first;
 
-    PMP::corefine(m0, m1,
-        CGAL::parameters::edge_is_constrained_map(ecm0),
-        CGAL::parameters::edge_is_constrained_map(ecm1));
+    PMP::corefine(
+        m0,
+        m1,
+        CGAL::parameters::edge_is_constrained_map(ecm0).visitor(visitor),
+        CGAL::parameters::edge_is_constrained_map(ecm1)
+    );
 
     vector<vector<int>> edges0, edges1;
     if (return_intersection_edges){
@@ -459,14 +539,41 @@ std::pair<
     auto outm0 = cortech::extract_vertices_and_faces(m0);
     auto outm1 = cortech::extract_vertices_and_faces(m1);
     auto vertex_id0 = vertex_property_map_to_vector(m0, "v:original_id");
-    auto face_id0 = face_property_map_to_vector(m0, "f:original_id");
     auto vertex_id1 = vertex_property_map_to_vector(m1, "v:original_id");
+    auto face_id0 = face_property_map_to_vector(m0, "f:original_id");
     auto face_id1 = face_property_map_to_vector(m1, "f:original_id");
-    cortech::SurfaceMeshWithPMaps outm0pm = {outm0.vertices, outm0.faces, vertex_id0, face_id0};
-    cortech::SurfaceMeshWithPMaps outm1pm = {outm1.vertices, outm1.faces, vertex_id1, face_id1};
+    auto out_face_id0 = face_property_map_to_vector(m0, "f:patch_id");
+    auto out_face_id1 = face_property_map_to_vector(m1, "f:patch_id");
+
+    cortech::SurfaceMeshWithFaceidAndPMaps outm0pm = {outm0.vertices, outm0.faces, out_face_id0, vertex_id0, face_id0};
+    cortech::SurfaceMeshWithFaceidAndPMaps outm1pm = {outm1.vertices, outm1.faces, out_face_id1, vertex_id1, face_id1};
     auto out0 = std::make_pair(outm0pm, outm1pm);
     auto out1 = std::make_pair(edges0, edges1);
     return {out0, out1};
+}
+
+vector<vector<int>> pmp_detect_sharp_edges(
+    vector<vector<float>> vertices,
+    vector<vector<int>> faces,
+    float angle = 60.0)
+{
+    Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces);
+
+    auto ecm = mesh.add_property_map<Edge_index, bool>("e:ecm", false).first;
+    PMP::detect_sharp_edges(mesh, angle, ecm);
+
+    vector<vector<int>> feature_edges;
+    int v0,v1;
+    for (auto e : mesh.edges())
+    {
+        if (ecm[e])
+        {
+            v0 = static_cast<int>(mesh.vertex(e,0).idx());
+            v1 = static_cast<int>(mesh.vertex(e,1).idx());
+            feature_edges.push_back({v0,v1});
+        }
+    }
+    return feature_edges;
 }
 
 cortech::SurfaceMesh pmp_duplicate_non_manifold_edges_in_polygon_soup(
@@ -479,14 +586,24 @@ cortech::SurfaceMesh pmp_duplicate_non_manifold_edges_in_polygon_soup(
     return {vo, faces};
 }
 
-cortech::SurfaceMesh pmp_duplicate_non_manifold_vertices(
+cortech::SurfaceMeshWithPMaps pmp_duplicate_non_manifold_vertices(
     vector<vector<float>> vertices,
     vector<vector<int>> faces)
 {
-    Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces, false);
+    // Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces, false);
+    Surface_mesh mesh = cortech::force_from_polygon_soup(vertices, faces);
+    // std::cout << vertices.size() << " : " << mesh.number_of_vertices() << std::endl;
+
+    add_property_map_face_id(mesh);
+    add_property_map_vertex_id(mesh);
+
     PMP::duplicate_non_manifold_vertices(mesh);
+
     auto out = cortech::extract_vertices_and_faces(mesh);
-    return out;
+    auto orig_v_id = vertex_property_map_to_vector(mesh, "v:original_id");
+    auto orig_f_id = face_property_map_to_vector(mesh, "f:original_id");
+
+    return {out.vertices, out.faces, orig_v_id, orig_f_id};
 }
 
 vector<vector<int>> pmp_extract_boundary_cycles(
@@ -632,14 +749,13 @@ vector<vector<int>> pmp_intersecting_meshes(
     vector<vector<float>> vertices1,
     vector<vector<int>> faces1)
 {
-    auto points0 = cortech::vertices_to_point3(vertices0);
-    auto points1 = cortech::vertices_to_point3(vertices1);
+    // auto points0 = cortech::vertices_to_point3(vertices0);
+    // auto points1 = cortech::vertices_to_point3(vertices1);
+    // PMP::duplicate_non_manifold_edges_in_polygon_soup(points0, faces0);
+    // PMP::duplicate_non_manifold_edges_in_polygon_soup(points1, faces1);
 
-    PMP::duplicate_non_manifold_edges_in_polygon_soup(points0, faces0);
-    PMP::duplicate_non_manifold_edges_in_polygon_soup(points1, faces1);
-
-    Surface_mesh mesh0 = cortech::from_polygon_soup(points0, faces0);
-    Surface_mesh mesh1 = cortech::from_polygon_soup(points1, faces1);
+    Surface_mesh mesh0 = cortech::from_polygon_soup(vertices0, faces0);
+    Surface_mesh mesh1 = cortech::from_polygon_soup(vertices1, faces1);
 
     auto np1 = CGAL::parameters::default_values();
     auto np2 = CGAL::parameters::default_values();
@@ -980,7 +1096,7 @@ vector<int> pmp_non_manifold_vertices(
     vector<vector<float>> vertices,
     vector<vector<int>> faces)
 {
-    Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces, false);
+    Surface_mesh mesh = cortech::force_from_polygon_soup(vertices, faces);
 
     vector<Halfedge_index> out;
     PMP::non_manifold_vertices(mesh, std::back_inserter(out));
@@ -989,6 +1105,10 @@ vector<int> pmp_non_manifold_vertices(
     non_manifold_vertices.reserve(out.size());
     for (Halfedge_index h : out)
         non_manifold_vertices.push_back(static_cast<int>(mesh.target(h).idx()));
+    // remove duplicates because each vertex is contained in two halfedges
+    std::sort(non_manifold_vertices.begin(), non_manifold_vertices.end());
+    auto last = std::unique(non_manifold_vertices.begin(), non_manifold_vertices.end());
+    non_manifold_vertices.erase(last, non_manifold_vertices.end());
     return non_manifold_vertices;
 }
 
@@ -1087,11 +1207,15 @@ cortech::SurfaceMeshWithPMaps pmp_remove_almost_degenerate_faces(
     add_property_map_vertex_id(mesh);
     // auto vcm = make_vertex_is_constrained_map(vertex_is_constrained, v2v);
     // auto ecm = make_edge_is_constrained_map(mesh, edge_is_constrained, v2v);
+    auto ecs = make_edge_set(mesh, edge_is_constrained, v2v);
+    CGAL::Boolean_property_map<std::set<Edge_index>> ecm(ecs);
+    auto vcs = make_vertex_is_constrained_set(vertex_is_constrained, v2v);
+    CGAL::Boolean_property_map<std::set<Vertex_index>> vcm(vcs);
 
     auto np = CGAL::parameters::cap_threshold(cap_threshold)
-        .needle_threshold(needle_threshold);
-        // .edge_is_constrained_map(ecm)
-        // .vertex_is_constrained_map(vcm);
+        .needle_threshold(needle_threshold)
+        .edge_is_constrained_map(ecm)
+        .vertex_is_constrained_map(vcm);
 
     if (face_is_selected.empty())
         PMP::remove_almost_degenerate_faces(mesh.faces(), mesh, np);
@@ -1136,10 +1260,7 @@ vector<vector<int>> pmp_self_intersections(
     vector<vector<float>> vertices,
     vector<vector<int>> faces)
 {
-    // Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces);
-    auto points = cortech::vertices_to_point3(vertices);
-    PMP::duplicate_non_manifold_edges_in_polygon_soup(points, faces);
-    Surface_mesh mesh = cortech::from_polygon_soup(points, faces);
+    Surface_mesh mesh = cortech::from_polygon_soup(vertices, faces);
 
     vector<std::pair<Face_index, Face_index>> intersecting_tris;
     PMP::self_intersections<CGAL::Parallel_if_available_tag>(
@@ -1301,6 +1422,7 @@ cortech::SurfaceMeshWithFaceidAndPMaps pmp_flip_edges(
     vector<vector<float>> vertices,
     vector<vector<int>> faces,
     vector<vector<int>> edges,
+    bool allow_normal_flips = false,
     vector<int> face_id = {})
 {
     auto [mesh, v2v] = cortech::from_polygon_soup_with_vertex_map(vertices, faces);
@@ -1309,9 +1431,11 @@ cortech::SurfaceMeshWithFaceidAndPMaps pmp_flip_edges(
     add_property_map_vertex_id(mesh);
     auto face_patch_map = add_property_map_face_patch_id(mesh, face_id);
 
-    auto ecs = make_edge_set(mesh, edges, v2v);
+    // auto ecs = make_edge_set(mesh, edges, v2v);
+    auto ecs = make_edge_vector(mesh, edges, v2v);
 
-    PMP::flip_edges(ecs, mesh, CGAL::parameters::face_patch_map(face_patch_map));
+    PMP::flip_edges(
+        ecs, mesh, allow_normal_flips, CGAL::parameters::face_patch_map(face_patch_map));
 
     mesh.collect_garbage();
 
@@ -1357,7 +1481,25 @@ cortech::SurfaceMeshWithFaceidAndPMaps pmp_split_long_edges(
     return {out.vertices, out.faces, out_face_id, orig_vid, orig_fid};
 }
 
-bool pmp_does_triangle_soup_self_intersect(vector<vector<float>> vertices, vector<vector<int>> faces)
+bool pmp_do_intersect(
+    vector<vector<float>> vertices0,
+    vector<vector<int>> faces0,
+    vector<vector<float>> vertices1,
+    vector<vector<int>> faces1)
+{
+    auto points0 = cortech::vertices_to_point3(vertices0);
+    auto points1 = cortech::vertices_to_point3(vertices1);
+
+    PMP::duplicate_non_manifold_edges_in_polygon_soup(points0, faces0);
+    PMP::duplicate_non_manifold_edges_in_polygon_soup(points1, faces1);
+
+    Surface_mesh mesh0 = cortech::from_polygon_soup(points0, faces0);
+    Surface_mesh mesh1 = cortech::from_polygon_soup(points1, faces1);
+
+    return PMP::do_intersect(mesh0, mesh1);
+}
+
+bool pmp_does_triangle_soup_self_intersect(vector<vector<float>> vertices, vector<vector<unsigned int>> faces)
 {
     auto points = cortech::vertices_to_point3(vertices);
     return PMP::does_triangle_soup_self_intersect(points, faces);
@@ -1588,6 +1730,27 @@ vector<vector<float>> pmp_tangential_relaxation(
     auto vertices_out = cortech::extract_vertices(mesh);
 
     return vertices_out;
+}
+
+vector<vector<int>> pmp_triangle_soup_self_intersections(
+    vector<vector<float>> vertices, vector<vector<int>> faces)
+{
+    auto points = cortech::vertices_to_point3(vertices);
+    PMP::merge_duplicate_points_in_polygon_soup(points, faces);
+
+    vector<std::pair<std::size_t, std::size_t>> intersecting_tris;
+    PMP::triangle_soup_self_intersections(
+        points, faces, std::back_inserter(intersecting_tris)
+    );
+
+    int n_intersections = intersecting_tris.size();
+    vector<vector<int>> intersecting_faces(n_intersections, vector<int>(2));
+    for (int i = 0; i < n_intersections; i++)
+        intersecting_faces[i] = {
+            (int)intersecting_tris[i].first,(int)intersecting_tris[i].second
+        };
+
+    return intersecting_faces;
 }
 
 // std::pair<vector<int>,vector<int>> pmp_volume_connected_components(

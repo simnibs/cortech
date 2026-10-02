@@ -8,25 +8,19 @@ from scipy.ndimage import map_coordinates
 import scipy.sparse
 from scipy.spatial import cKDTree
 
-from cortech.cgal import cgal_boost
+from cortech.cgal import boost_graph
 from cortech.cgal import alpha_wrap_3
 import cortech.cgal.polygon_mesh_processing as pmp
+import cortech.cgal.surface_mesh_segmentation as ss
 import cortech.cgal.surface_mesh_simplification as sms
 import cortech.cgal.surface_mesh_skeletonization as smskel
-
 import cortech.cgal.convex_hull_3
+
 from cortech.constants import Curvature
 import cortech.freesurfer
 import cortech.sphere_utils
 import cortech.utils
-
-def _ensure_array_is_index(index, required_size: int, invert: bool = False):
-    index = np.asarray(index)
-    if index.dtype == bool:
-        assert len(index) == required_size
-        return np.flatnonzero(~index if invert else index)
-    else:
-        return np.setdiff1d(np.arange(required_size), index) if invert else index
+from cortech.utils import _ensure_array_is_index
 
 
 def _merge_two_surfaces(s0, s1):
@@ -82,6 +76,7 @@ def _merge_two_surfaces(s0, s1):
 
     return s0.new(vertices, faces, face_id=face_id, vertex_data=vd, face_data=fd)
 
+
 def merge(*surfaces):
     """Merge a number of surfaces by concatenating their vertices and faces and
     updating the latter accordingly. Vertex and face data are concatenated as
@@ -91,6 +86,7 @@ def merge(*surfaces):
     for s in surfaces[2:]:
         out = _merge_two_surfaces(out, s)
     return out
+
 
 class ElementData(dict):
     def __init__(self, data=None, n: int | None = None):
@@ -272,11 +268,11 @@ class NonManifoldSurface:
         value = np.asarray(value) if isinstance(value, (list, tuple)) else value
         if value is None:
             self._face_id = np.full(self.n_faces, 0)
-        elif isinstance(value, int):
-            self._face_id = np.full(self.n_faces, value)
-        elif isinstance(value, np.ndarray) and np.isdtype(value.dtype, "integral"):
+        elif isinstance(value, np.ndarray) and np.issubdtype(value.dtype, np.integer):
             assert len(value) == self.n_faces and value.ndim == 1
             self._face_id = np.asarray(value)
+        elif np.issubdtype(type(value), np.integer):
+            self._face_id = np.full(self.n_faces, value)
         else:
             raise ValueError(f"Invalid face_id ({value})")
 
@@ -290,6 +286,7 @@ class NonManifoldSurface:
         assert value.ndim == 2
         self._faces = value
         self.n_faces, self.vertices_per_face = value.shape
+        self.nf = self.n_faces
 
     @property
     def vertices(self):
@@ -301,6 +298,7 @@ class NonManifoldSurface:
         assert value.ndim == 2
         self._vertices = value
         self.n_vertices, self.n_dim = value.shape
+        self.nv = self.n_vertices
 
     # Methods
 
@@ -312,6 +310,7 @@ class NonManifoldSurface:
         return out
 
     def _check_face_id(self, face_id: npt.ArrayLike | None):
+        """Check validity of `face_id`."""
         face_id = self.face_id if face_id is None else np.asarray(face_id)
         assert len(face_id) == self.n_faces and face_id.ndim == 1
         return face_id
@@ -346,7 +345,10 @@ class NonManifoldSurface:
 
         return nib.gifti.GiftiImage(header=header, darrays=[vertices, faces])
 
-    def as_mesh(self, faces: npt.NDArray | None = None):
+    def mesh(self, faces: npt.NDArray | None = None):
+        """For each face, index into `self.vertices` and return an array with
+        vertex coordinates for each face, i.e., (n_faces, n_vertices_per_face, 3).
+        """
         f = self.faces if faces is None else self.faces[faces]
         return self.vertices[f]
 
@@ -383,7 +385,7 @@ class NonManifoldSurface:
         ----------
         [1] https://ics.uci.edu/~eppstein/junkyard/circumcenter.html
         """
-        m = self.as_mesh()
+        m = self.mesh()
         if indices is None:
             indices = slice(None, None)
         a = m[indices, 0]
@@ -403,34 +405,66 @@ class NonManifoldSurface:
         return (center, radius) if return_radius else center
 
     def clear_data(self):
+        """Clear all face and vertex data."""
         self.clear_face_data()
         self.clear_vertex_data()
 
     def clear_face_data(self):
+        """Clear all face data."""
         self.data.face = ElementData(n=self.n_faces)
 
     def clear_vertex_data(self):
+        """Clear all vertex data."""
         self.data.vertex = ElementData(n=self.n_vertices)
 
-
     def convex_hull(self):
+        """Return a triangulation of the convex hull."""
         v, f = cortech.cgal.convex_hull_3.convex_hull(self.vertices)
         return self.new(v, f)
 
     def copy(self):
         return self.new()
 
+    def do_intersect(self, other: "NonManifoldSurface") -> bool:
+        """Return True if there exists a face in `self` and a face in `other`
+        which interesects. Otherwise, return False.
+
+        Parameters
+        ----------
+        other : cortech.Surface
+
+        Returns
+        -------
+        True if any intersections exist, else False.
+        """
+        return pmp.do_intersect(self.vertices, self.faces, other.vertices, other.faces)
+
     def does_not_self_intersect(self):
+        """Check whether the surface does *not* contain self-intersections."""
         return not self.does_self_intersect()
 
     def does_self_intersect(self):
+        """Check whether the surface contains self-intersections."""
         return pmp.does_triangle_soup_self_intersect(self.vertices, self.faces)
 
     def duplicate_non_manifold_edges(self):
+        """Duplicate non-manifold edges, e.g., edges which is shared by more
+        than two faces.
+        """
         v, f = pmp.duplicate_non_manifold_edges_in_polygon_soup(
             self.vertices, self.faces
         )
-        return self.new(v, f)
+        # new vertices are pushed back to the input array
+        vid = np.arange(len(v))
+        vid[self.n_vertices :] = -1
+        vd = dict(original_id=vid)
+        return self.new(v, f, vertex_data=vd, keep_face_id=True, keep_face_data=True)
+
+    def duplicate_non_manifold_vertices(self):
+        """Duplicate non-manifold vertices, i.e., vertices that are "pintched"."""
+        v, f, vid, _ = pmp.duplicate_non_manifold_vertices(self.vertices, self.faces)
+        vd = dict(original_id=vid)
+        return self.new(v, f, vertex_data=vd, keep_face_id=True, keep_face_data=True)
 
     def edges(
         self,
@@ -440,13 +474,13 @@ class NonManifoldSurface:
         sort_axis_1: bool = False,
         retain_edge_order: bool = True,
     ):
-        """Return the vertex pairs making up the edges of the triangles.
+        """Return the indices of vertex pairs making up the edges of the faces.
 
         Parameters
         ----------
         select :
-            Indices of the faces for which to return the edges (by default,
-            the edges of all faces).
+            Indices of the faces for which to return the edges (by default, all
+            faces).
         unique : bool
             Return only unique edges. Implies `sort_axis_1=True`.
         sort_axis_0 : bool
@@ -460,12 +494,14 @@ class NonManifoldSurface:
         Returns
         -------
         edges
-
+            An array of shape (n_edges, 2). This can be reshaped into
+            (-1, 3, 2) where the ith row corresponds to the edges for the ith
+            face.
         """
         # force sorting of axis 1
         sort_axis_1 = unique or sort_axis_0 or sort_axis_1
 
-        faces = self.faces if select is None else self.faces[select]
+        faces = self.faces if select is None else self.faces[np.asarray(select)]
         edges = faces[:, self.edge_pairs]
         edges = edges.reshape((-1, 2))
         edges = np.sort(edges, axis=1) if sort_axis_1 else edges
@@ -483,46 +519,100 @@ class NonManifoldSurface:
                 edges = edges[s0[s1]]
         return edges
 
-    def edge_vectors(self, edges: npt.NDArray | None = None):
-        e = self.edges() if edges is None else edges
-        edge_mesh = self.vertices[e] # (n_edges, coords)
+    def edge_vectors(self, edges: npt.ArrayLike | None = None):
+        """Return the edge vectors for `edges` which is an (n, 2) array of
+        vertex indices. The edge vectors point from edges[:, 0] to edges[:, 1].
+
+        Parameters
+        ----------
+        edges :
+            Array of shape (..., 2) where the last dimension contains vertex
+            indices forming an edge (by default, all edges).
+
+        Returns
+        -------
+        """
+        e = self.edges() if edges is None else np.asarray(edges)
+        edge_mesh = self.vertices[e]  # (n_edges, coords)
         return np.diff(edge_mesh, axis=-2).squeeze()
 
     def edges_norm(self, edges: npt.NDArray | None = None):  # , unique: bool = False
-        """ """
-        ev = self.edge_vectors(edges) # ([n_edges,] 2)
+        """Returns the norm (length) of the vectors formed by `edges`.
+
+        Parameters
+        ----------
+        edges
+            Array of shape (..., 2) where the last dimension contains vertex
+            indices forming an edge (by default, all edges).
+
+        Returns
+        -------
+        edge norms
+        """
+        ev = self.edge_vectors(edges)  # ([n_edges,] 2)
         return np.linalg.norm(ev, axis=-1)
 
-    def face_centers(self, faces=None):
-        return self.as_mesh(faces).mean(-2)
+    def face_centers(self, select=None):
+        """Return the center of each face.
 
-    def face_areas(self, faces: npt.NDArray | None = None):
-        return 0.5 * np.linalg.norm(self._face_normals_unnormalized(faces), axis=1)
+        Parameters
+        ----------
+        select :
+            Indices or boolean mask of faces for which to calculate centers (by
+            default, all faces).
 
-    def _face_normals_unnormalized(self, faces: npt.NDArray | None = None):
-        m = self.as_mesh(faces)
+        """
+        return self.mesh(select).mean(-2)
+
+    def face_areas(self, select: npt.ArrayLike | None = None):
+        """Return the area of each face.
+
+        Parameters
+        ----------
+        select :
+            Indices or boolean mask of faces for which to calculate area (by
+            default, all faces).
+
+        """
+        return 0.5 * np.linalg.norm(self._face_normals_unnormalized(select), axis=1)
+
+    def _face_normals_unnormalized(self, select: npt.ArrayLike | None = None):
+        m = self.mesh(select)
         return np.cross(m[:, 1] - m[:, 0], m[:, 2] - m[:, 0]).astype(float)
 
-    def face_normals(self, faces: npt.NDArray | None = None):
-        """Get normal vectors for each triangle in the mesh.
+    def face_normals(self, select: npt.NDArray | None = None):
+        """Compute normal vectors for each face in the mesh.
 
         PARAMETERS
         ----------
-        mesh : ndarray
-            Array describing the surface mesh. The dimension are:
-            [# of triangles] x [vertices (of triangle)] x [coordinates (of vertices)].
+        select : ndarray
+            A subset of the faces for which to calculate the normals (default
+            is all faces).
 
         RETURNS
         ----------
-        tnormals : ndarray
-            Normal vectors of each triangle in "mesh".
+        face_normals : ndarray
+            Normal vectors of each face.
         """
-        tnormals = self._face_normals_unnormalized(faces)
+        tnormals = self._face_normals_unnormalized(select)
         tnormals /= np.linalg.norm(tnormals, axis=1, keepdims=True)
         return tnormals
 
-    def face_selection_to_vertex_selection(self, selection):
-        return np.unique(self.faces[selection])
+    def face_range(self):
+        """Return an array [0, 1, ..., self.n_faces -1]."""
+        return np.arange(self.n_faces)
+
+    def face_selection_to_vertex_selection(self, select: npt.ArrayLike):
+        """Get the (unique) vertex indices corresponding to the faces in
+        `select`.
+
+        Parameters
+        ----------
+        select
+            Indices or boolean mask of selected faces.
+
+        """
+        return np.unique(self.faces[select])
 
     def faces_to_edges(self, retain_edge_order: bool = True):
         """Compute a mapping of faces to unique edges."""
@@ -542,9 +632,9 @@ class NonManifoldSurface:
             return uinv
 
     def intersections_with(
-        self, other, return_unique: bool = False
+        self, other: "NonManifoldSurface", return_unique: bool = False
     ) -> tuple[npt.NDArray, npt.NDArray]:
-        """Compute intersecting pairs of triangles between self and other.
+        """Compute intersecting pairs of triangles between `self` and `other`.
 
         Parameters
         ----------
@@ -581,27 +671,47 @@ class NonManifoldSurface:
                 return intersect_pairs[0], intersect_pairs[1]
 
     def is_closed(self):
-        _,c = np.unique(self.edges(sort_axis_1=True), return_counts=True, axis=0)
+        """Check if the surface is closed, i.e., if all edges are shared by
+        exactly two faces.
+        """
+        _, c = np.unique(self.edges(sort_axis_1=True), return_counts=True, axis=0)
         return np.all(c == 2)
 
-    def is_manifold(self, selection: npt.ArrayLike | None = None):
-        """Check if the surface is topologically manifold.
+    def is_manifold(self, select: npt.ArrayLike | None = None):
+        """Check if the surface is *topologically* manifold. The check is
+        performed using
+
+            CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh
+
+        which checks that
+            1. each edge has at most two incident faces and such an edge is
+                visited in opposite direction along the two face boundaries,
+            2. no polygon has twice the same vertex, and
+            3. the polygon soup describes a manifold surface.
 
         Parameters
         ----------
-        selection
-            Check the topology of a particular selection of faces.
+        select
+            Indices or boolean mask of a subset of the faces. The topology of
+            this selection of faces is checked.
 
         Returns
         -------
 
+
+        Notes
+        -----
+
         """
-        faces = self.faces if selection is None else self.faces[selection]
+        faces = self.faces if select is None else self.faces[np.asarray(select)]
         return pmp.is_polygon_soup_a_polygon_mesh(faces)
 
     def merge_duplicate_faces(self, keep_face_data: bool = False, cls=None):
-        """
+        """Merge duplicate faces. Two faces are duplicate if they share the
+        same vertices in the same order.
 
+        Parameters
+        ----------
         keep_vertex_data : bool
             If true, this will find, for each point in the merged vertex pool,
             the corresponding point in the original vertex pool. For the merged
@@ -615,10 +725,12 @@ class NonManifoldSurface:
             fd = self.data.face.new_from_subset(index)
         else:
             fd = None
-        return self.new(v, f, keep_face_id=True, keep_vertex_data=True, cls=cls, face_data=fd)
+        return self.new(
+            v, f, keep_face_id=True, keep_vertex_data=True, cls=cls, face_data=fd
+        )
 
     def merge_duplicate_points(self, keep_vertex_data: bool = False, cls=None):
-        """
+        """Merge duplicate points.
 
         keep_vertex_data : bool
             If true, this will find, for each point in the merged vertex pool,
@@ -633,7 +745,13 @@ class NonManifoldSurface:
             vd = self.data.vertex.new_from_subset(index)
         else:
             vd = None
-        return self.new(v, f, keep_face_id=True, keep_face_data=True, cls=cls, vertex_data=vd)
+        return self.new(
+            v, f, keep_face_id=True, keep_face_data=True, cls=cls, vertex_data=vd
+        )
+
+    def non_manifold_vertices(self):
+        """Return an array vertex indices with non-manifold topology."""
+        return pmp.non_manifold_vertices(self.vertices, self.faces)
 
     def orient_faces(self, keep_vertex_data: bool = False, cls=None):
         """If the operation succeeded without duplicating any points, then
@@ -662,7 +780,14 @@ class NonManifoldSurface:
                 return self.new(v, f, **kw)
 
     def astype(self, cls):
-        return self.new(cls=cls, keep_face_id=True, keep_vertex_data=True, keep_face_data=True)
+        """Return self as another surface class."""
+        return self.new(
+            cls=cls, keep_face_id=True, keep_vertex_data=True, keep_face_data=True
+        )
+
+    def as_manifold_surface(self):
+        """Try to convert `self` to a ManifoldSurface."""
+        return self.astype(ManifoldSurface)
 
     def new(
         self,
@@ -701,13 +826,18 @@ class NonManifoldSurface:
             **kwargs,
         )
 
-    def plot(self, scalars: npt.ArrayLike | str | None = None, mesh_kwargs=None, plotter_kwargs=None, show=True):
+    def plot(
+        self,
+        scalars: npt.ArrayLike | str | None = None,
+        mesh_kwargs=None,
+        plotter_kwargs=None,
+        show=True,
+    ):
         """
 
         scalars:
             If "face_id", then `self.face_id` will be used as scalar
         """
-
 
         # only works when pyvista is installed
         from cortech.visualization import plot_surface
@@ -719,8 +849,10 @@ class NonManifoldSurface:
             plotter.show()
         return plotter
 
-    def remove_unused_vertices(self, overwrite_original_id: bool = True, inplace: bool = False):
-        """Remove unused vertices and reindex faces."""
+    def remove_unused_vertices(
+        self, overwrite_original_id: bool = True, inplace: bool = False
+    ):
+        """Remove unused vertices and reindex the faces accordingly."""
         vertices_used = np.unique(self.faces)
         reindexer = np.zeros(self.n_vertices, dtype=self.faces.dtype)
         reindexer[vertices_used] = np.arange(vertices_used.size, dtype=self.faces.dtype)
@@ -738,39 +870,53 @@ class NonManifoldSurface:
             self.data.vertex = vertex_data
             return self
         else:
-            return self.new(v, f, keep_face_id=True, keep_face_data=True, vertex_data=vertex_data)
+            return self.new(
+                v, f, keep_face_id=True, keep_face_data=True, vertex_data=vertex_data
+            )
 
-    def remove_faces(self, indices: npt.ArrayLike, overwrite_original_id: bool = True, inplace: bool = False):
+    def remove_faces(
+        self,
+        select: npt.ArrayLike,
+        overwrite_original_id: bool = True,
+        inplace: bool = False,
+    ):
         """Remove the specified faces. The surface will be remove_unused_vertices afterwards,
         removing any unused vertices.
 
         Parameters
         ----------
-        faces
-            Indices of the faces to remove.
+        select
+            Indices or boolean mask indicating the faces to remove.
         """
         # invert selection
-        indices = _ensure_array_is_index(indices, self.n_faces, invert=True)
-        return self.select_faces(indices, overwrite_original_id, inplace)
+        select = _ensure_array_is_index(select, self.n_faces, invert=True)
+        return self.select_faces(select, overwrite_original_id, inplace)
 
-    def remove_vertices(self, indices: npt.NDArray, overwrite_original_id: bool = True, inplace: bool = False):
+    def remove_vertices(
+        self,
+        select: npt.ArrayLike,
+        overwrite_original_id: bool = True,
+        inplace: bool = False,
+    ):
         """Remove the specified vertices along with any faces that reference
         these vertices.
 
         Paramters
         ---------
-        vertices :
-            Array of indices or boolean mask indicating the vertices to remove.
+        select :
+            Indices or boolean mask indicating the vertices to remove.
 
         Returns
         -------
 
         """
         # invert selection
-        indices = _ensure_array_is_index(indices, self.n_vertices, invert=True)
-        return self.select_vertices(indices, overwrite_original_id, inplace)
+        select = _ensure_array_is_index(select, self.n_vertices, invert=True)
+        return self.select_vertices(select, overwrite_original_id, inplace)
 
     def reverse_face_orientation(self, inplace: bool = False):
+        """Reverse the face orientation by reversing the rows of `self.faces`.
+        """
         if inplace:
             self.faces = self.faces[:, ::-1]
             return self
@@ -817,24 +963,41 @@ class NonManifoldSurface:
                     vol_geom=self.geometry.as_freesurfer_dict(),
                 )
 
-    def select_faces(self, indices: npt.ArrayLike, overwrite_original_id: bool = True, inplace: bool = False):
-        """
+    def select_faces(
+        self,
+        select: npt.ArrayLike,
+        overwrite_original_id: bool = True,
+        inplace: bool = False,
+    ):
+        """Return a new instance of `self` constrained to the faces in
+        `select`.
 
-        overwrite_original_id
+        Parameters
+        ----------
+        select : npt.ArrayLike
+            Selection specified as indices or boolean array.
+        overwrite_original_id : bool
             If True, the indices in `original_id` will point to the surface
             from which the selection was made. If False and `original_id`
             exists (e.g., from a previous selection), the values will be kept
             thus referring back to the surface where the initial selection was
-            made.
+            made (default = True).
+        inplace : bool
+            Modify this instance in-place. Otherwise, return a new instance
+            (default = False)
+
+        Returns
+        -------
+            A new instance of `self` constrained to the selection.
 
         """
-        indices = _ensure_array_is_index(indices, self.n_faces)
+        select = _ensure_array_is_index(select, self.n_faces)
 
-        selected_faces = self.faces[indices]
-        face_id = self.face_id[indices]
-        face_data = self.data.face.new_from_subset(indices)
+        selected_faces = self.faces[select]
+        face_id = self.face_id[select]
+        face_data = self.data.face.new_from_subset(select)
         if overwrite_original_id or ("original_id" not in face_data):
-            face_data["original_id"] = indices
+            face_data["original_id"] = select
         if inplace:
             self.faces = selected_faces
             self.face_id = face_id
@@ -850,13 +1013,39 @@ class NonManifoldSurface:
         out = out.remove_unused_vertices(overwrite_original_id, inplace)
         return out
 
-    def select_vertices(self, indices: npt.ArrayLike, overwrite_original_id: bool = True, inplace: bool = False):
-        """Keep faces which only reference selected vertices.
+    def select_vertices(
+        self,
+        select: npt.ArrayLike,
+        overwrite_original_id: bool = True,
+        inplace: bool = False,
+    ):
+        """Return a new instance of `self` constrained to the faces which
+        reference the vertices in `select`.
 
+        Parameters
+        ----------
+        select : npt.ArrayLike
+            Selection specified as indices or boolean array.
+        overwrite_original_id
+            If True, the indices in `original_id` will point to the surface
+            from which the selection was made. If False and `original_id`
+            exists (e.g., from a previous selection), the values will be kept
+            thus referring back to the surface where the initial selection was
+            made (default = True).
+        inplace : bool
+            Modify this instance in-place. Otherwise, return a new instance
+            (default = False)
 
+        Returns
+        -------
+            A new instance of `self` constrained to the selection.
         """
-        faces_selected = self.vertex_selection_to_face_selection(indices)
+        faces_selected = self.vertex_selection_to_face_selection(select)
         return self.select_faces(faces_selected, overwrite_original_id, inplace)
+
+    def self_intersections(self):
+        """Compute intersecting pairs of faces."""
+        return pmp.triangle_soup_self_intersections(self.vertices, self.faces)
 
     def save_off(self, filename):
         """Writes mesh surfaces as an .off file
@@ -891,6 +1080,14 @@ class NonManifoldSurface:
         return self.space == "scanner"
 
     def to_scanner_ras(self, *, inplace: bool = True):
+        """Convert the surface vertex coordinates to scanner RAS.
+
+        Parameters
+        ----------
+        inplace : bool
+            Modify this instance in-place. Otherwise, return a new instance
+            (default = True)
+        """
         if self.is_surface_ras():
             trans = self.geometry.get_affine("scanner", fr="tkr")
             v = nib.affines.apply_affine(trans, self.vertices)
@@ -902,6 +1099,14 @@ class NonManifoldSurface:
         return v
 
     def to_surface_ras(self, *, inplace: bool = True):
+        """Convert the surface vertex coordinates to surface RAS.
+
+        Parameters
+        ----------
+        inplace : bool
+            Modify this instance in-place. Otherwise, return a new instance
+            (default = True)
+        """
         if self.space == "scanner":
             trans = self.geometry.get_affine("tkr", fr="scanner")
             v = nib.affines.apply_affine(trans, self.vertices)
@@ -912,15 +1117,36 @@ class NonManifoldSurface:
             v = self.vertices
         return v
 
-    def vertex_selection_to_face_selection(self, selection: npt.ArrayLike, n: int = 3):
+    def vertex_range(self):
+        """Return an array [0, 1, ..., self.n_vertices -1]."""
+        return np.arange(self.n_vertices)
+
+    def vertex_selection_to_face_selection(self, select: npt.ArrayLike, n: int = 3):
+        """Convert a vertex selection to a face selection.
+
+        Parameters
+        ----------
+        select : npt.ArrayLike
+            Selection specified as indices or boolean array.
+        n : int
+            The number of selected vertices that a face must contain in order
+            to be included in the selection (default = 3).
+
+        Returns
+        -------
+        face selection
+            The selection will be indices or boolean array depending on dtype
+            of `selection` (e.g., boolean vertex selection will return a
+            boolean face selection).
+        """
         assert 0 < n <= 3
-        selection = np.asarray(selection)
-        if selection.dtype == bool:
-            assert len(selection) == self.n_vertices
-            valid_vertices = selection[self.faces]
+        select = np.asarray(select)
+        if select.dtype == bool:
+            assert len(select) == self.n_vertices
+            valid_vertices = select[self.faces]
             return valid_vertices.sum(1) >= n
         else:
-            valid_vertices = np.isin(self.faces, selection)
+            valid_vertices = np.isin(self.faces, select)
             return np.flatnonzero(valid_vertices.sum(1) >= n)
 
     # constructors
@@ -960,7 +1186,6 @@ class NonManifoldSurface:
         kwargs["face_data"] = dict(m.cell_data.items())
         faces = m.cells if m.faces is None else m.faces
         return cls(m.points, faces.reshape(-1, 4)[:, 1:], **kwargs)
-
 
     @classmethod
     def from_freesurfer(cls, filename: Path | str, **kwargs):
@@ -1123,10 +1348,14 @@ class ManifoldSurface(NonManifoldSurface):
         else:
             return self.new(out_coords)
 
+    def as_nonmanifold_surface(self):
+        """Convert `self` to NonManifoldSurface."""
+        return self.astype(NonManifoldSurface)
+
     def clip(self, p: npt.ArrayLike, d: npt.ArrayLike, inplace: bool = False):
-        """Clip the by keeping the part that is on the negative side of a plane
-        defined by a point `p` and a direction `d`. The side opposite to `d` is
-        kept.
+        """Clip `self` by keeping the part that is on the negative side of a
+        plane defined by a point `p` and a direction `d`. (I.e., the side
+        opposite to the direction of `d` is kept.)
 
 
         Parameters
@@ -1158,9 +1387,9 @@ class ManifoldSurface(NonManifoldSurface):
         else:
             return self.new(v, f)
 
-    def connected_components(self, connectivity="face", selection=None):
+    def connected_components(self, connectivity: str = "face", select=None):
         A = self.adjacency_matrix(connectivity)
-        A = A if selection is None else A[selection][:, selection]
+        A = A if select is None else A[select][:, select]
         _, cc = scipy.sparse.csgraph.connected_components(
             A, directed=False, return_labels=True
         )
@@ -1169,7 +1398,13 @@ class ManifoldSurface(NonManifoldSurface):
         return sorter[cc], cc_size[sorter]
 
     def connected_components_cgal(self, constrained_edges: npt.NDArray | None = None):
-        """Compute connected components on the surface.
+        """Compute connected components on the surface using CGAL.
+
+        Parameters
+        ----------
+        constrained_edges
+            Array of size (n, 2) defining constrained edges. Connected
+            components cannot include constrained edges.
 
         Returns
         -------
@@ -1180,19 +1415,26 @@ class ManifoldSurface(NonManifoldSurface):
         """
         return pmp.connected_components(self.vertices, self.faces, constrained_edges)
 
-    def corefine(self, other, return_intersection: bool = False):
-        """Corefine the surface with another surface.
+    def corefine(self, other: "ManifoldSurface", return_intersection: bool = False):
+        """Corefine the `self` with `other`. Corefinement resolves all
+        intersections between two meshes by embedding the intersection lines
+        into each mesh.
 
         Parameters
         ----------
-        return_intersection
+        return_intersection : bool
             If True, returns a tuple of size two containing the intersection
             edges of `self` and `other`, respectively.
 
         Returns
         -------
         _type_
-            Tuple of
+            If `return_intersection` is False then a tuple of
+
+                corefined self
+                corefined_other
+
+            else a tuple of
 
                 corefined self
                 corefined other
@@ -1204,16 +1446,34 @@ class ManifoldSurface(NonManifoldSurface):
         CGAL::Polygon_mesh_processing::corefine
         """
         co_self, co_other, e_self, e_other = pmp.corefine(
-            self.vertices, self.faces, other.vertices, other.faces, return_intersection
+            self.vertices,
+            self.faces,
+            other.vertices,
+            other.faces,
+            self.face_id,
+            other.face_id,
+            return_intersection,
         )
         out = (
-            self.new(co_self[0],co_self[1],vertex_data=dict(original_id=co_self[2]), face_data=dict(original_id=co_self[3])),
-            other.new(co_other[0],co_other[1],vertex_data=dict(original_id=co_other[2]), face_data=dict(original_id=co_other[3])),
+            self.new(
+                co_self[0],
+                co_self[1],
+                face_id=co_self[2],
+                vertex_data=dict(original_id=co_self[3]),
+                face_data=dict(original_id=co_self[4]),
+            ),
+            other.new(
+                co_other[0],
+                co_other[1],
+                face_id=co_other[2],
+                vertex_data=dict(original_id=co_other[3]),
+                face_data=dict(original_id=co_other[4]),
+            ),
         )
         return out + (e_self, e_other) if return_intersection else out
 
     def curvature(self, percentile_clip_range=(0.1, 99.9), smooth_iter: int = 0):
-        """Compute principal, mean, and Guassian curvature.
+        """Compute principal, mean, and Guassian curvatures.
 
         Parameters
         ----------
@@ -1250,6 +1510,12 @@ class ManifoldSurface(NonManifoldSurface):
         # store the curvature directions as well
         # self.curv_vec = Curvature(k1=E[:, 0], k2=[E[:, 1]])
 
+    def detect_sharp_edges(self, angle: float = 60.0):
+        """Return edges whose face pairs form a dihedral angle larger than
+        `angle.
+        """
+        return pmp.detect_sharp_edges(self.vertices, self.faces, angle)
+
     def distance(self, other: "ManifoldSurface", accelerate: bool | str = "barycenter"):
         return self.distance_query(other.vertices, accelerate)
 
@@ -1276,7 +1542,7 @@ class ManifoldSurface(NonManifoldSurface):
             "barycenter",
         }
         if accelerate == "barycenter":
-            barycenters = self.face_barycenters()
+            barycenters = self.face_centers()
             tree = cKDTree(barycenters)
             _, index = tree.query(query_points)
             query_hints = barycenters[index]
@@ -1288,17 +1554,19 @@ class ManifoldSurface(NonManifoldSurface):
         )
 
     def euler_characteristic(self):
-        n_edges = self.edges(unique=True)
+        n_edges = len(self.edges(unique=True))
         return self.n_vertices - n_edges + self.n_faces
 
-    def expand_selection(self, selection: npt.ArrayLike, k: int = 1, connectivity: str = "vertex"):
-        selection = np.asarray(selection)
-        if (input_is_bool := selection.dtype == bool):
-            selection = np.flatnonzero(selection)
-        selection = np.atleast_2d(selection)
+    def expand_selection(
+        self, select: npt.ArrayLike, k: int = 1, connectivity: str = "vertex"
+    ):
+        select = np.asarray(select)
+        if input_is_bool := select.dtype == bool:
+            select = np.flatnonzero(select)
+        select = np.atleast_2d(select)
 
-        # expand = cgal_boost.expand_vertex_selection(self.vertices, self.faces, selection, k)
-        expand = self.k_ring_neighbors(selection, k, connectivity=connectivity)[0][0]
+        # expand = boost_graph.expand_vertex_selection(self.vertices, self.faces, selection, k)
+        expand = self.k_ring_neighbors(select, k, connectivity=connectivity)[0][0]
 
         if input_is_bool:
             match connectivity:
@@ -1312,41 +1580,63 @@ class ManifoldSurface(NonManifoldSurface):
         else:
             return expand
 
-    def expand_face_selection(self, selection: npt.ArrayLike, k: int = 1):
-        return self.expand_selection(selection, k, "face")
+    def expand_face_selection(self, select: npt.ArrayLike, k: int = 1):
+        """Expand a selection of faces by the kth ring neighborhood."""
+        return self.expand_selection(select, k, "face")
 
-    def expand_vertex_selection(self, selection: npt.ArrayLike, k: int = 1):
-        return self.expand_selection(selection, k, "vertex")
+    def expand_face_selection_for_removal(self, select: npt.ArrayLike):
+        """Expand a face selection so that when removed, they will not create
+        non-manifold vertices.
+        """
+        select = _ensure_array_is_index(select, self.n_faces)
+        return boost_graph.expand_face_selection_for_removal(
+            self.vertices, self.faces, select
+        )
+
+    def expand_vertex_selection(self, select: npt.ArrayLike, k: int = 1):
+        """Expand a selection of vertices by the kth ring neighborhood."""
+        return self.expand_selection(select, k, "vertex")
 
     def extract_boundary_cycles(self):
         return pmp.extract_boundary_cycles(self.vertices, self.faces)
 
-    def fair(self, indices, continuity: int = 1, inplace: bool = False):
-        """
+    def fair(self, select, continuity: int = 1, inplace: bool = False):
+        """Fair the selected vertices. Fairing smoothes the selection by
+        computing an energy (e.g., spring, bending) minimizing approximation to
+        the local neighborhood of vertices.
 
         Parameters
         ----------
-        indices :
-            Indices of the vertices to fair.
+        select :
+            Indices or boolean mask of the vertices to fair.
 
         """
-        v = pmp.fair(self.vertices, self.faces, indices, continuity)
+        select = _ensure_array_is_index(select, self.n_vertices)
+        v = pmp.fair(self.vertices, self.faces, select, continuity)
         if inplace:
             self.vertices = v
         else:
-            return self.new(v, keep_face_id=True, keep_vertex_data=True, keep_face_data=True)
+            return self.new(
+                v, keep_face_id=True, keep_vertex_data=True, keep_face_data=True
+            )
 
     def find_border_edges(self):
-        return cgal_boost.find_border_edges(self.vertices, self.faces)
+        """Find border edges of `self`, i.e., edges which are only part of a
+        single face.
+        """
+        return boost_graph.find_border_edges(self.vertices, self.faces)
 
-    def find_patch_edges(self, patches=None, face_id: npt.ArrayLike | None = None, ):
-        """Find the edges separating different patches.
+    def find_patch_edges(
+        self, patches=None, face_id: npt.ArrayLike | None = None,
+    ):
+        """Find the edges separating different patches. By default, patches are
+        defined by `self.face_id`
 
         Parameters
         ----------
         face_id
-            If none, then the internal `face_id` map is used.
-
+            The ID of each face. If None, then the internal `face_id` map is
+            used.
 
         """
         # if patches is not None:
@@ -1361,7 +1651,7 @@ class ManifoldSurface(NonManifoldSurface):
         A = self.adjacency_matrix("face")
         if has_patch:
             patch_faces = np.flatnonzero(np.isin(face_id, patches))
-            A = A[patch_faces][:,patch_faces]
+            A = A[patch_faces][:, patch_faces]
         A = A.tocoo()
 
         row = patch_faces[A.row] if has_patch else A.row
@@ -1369,26 +1659,26 @@ class ManifoldSurface(NonManifoldSurface):
 
         polyline_edges = face_id[row] != face_id[col]
         face_pairs = np.stack((row[polyline_edges], col[polyline_edges]), -1)
-        face_pair_vertices = np.sort(self.faces[face_pairs].reshape(-1,6), 1)
+        face_pair_vertices = np.sort(self.faces[face_pairs].reshape(-1, 6), 1)
         does_occur_twice = np.diff(face_pair_vertices, axis=1) == 0
-        assert np.all(does_occur_twice.sum(1) == 2) # sanity
+        assert np.all(does_occur_twice.sum(1) == 2)  # sanity
 
-        return np.unique(face_pair_vertices[:, 1:][does_occur_twice].reshape(-1,2), axis=0)
+        return np.unique(
+            face_pair_vertices[:, 1:][does_occur_twice].reshape(-1, 2), axis=0
+        )
 
-    def flip_edges(self, edges):
-        """Split a number of edges. By halfedges (CGAL terminology), we
-        mean a *directed* edge.
+    def flip_edges(self, edges: npt.ArrayLike, allow_normal_flips: bool = False):
+        """Flip the specified edges of the surface.
 
-        A few checks are performed to verify the validity of the edge collapse
-        but generally it is the responsibility of the user to ensure that the
-        progressive edge collapses will give the desired outcome.
 
         Parameters
         ----------
-        halfedges
-            An array of shape (n,2) where the first and second columns are the
-            sources and targets of the edges, respectively. Edges are collapsed
-            by collapsing the source vertices onto the target vertices.
+        edges :
+            Array of shape (n,2), where n is the number of edges, containing
+            vertex indices.
+        allow_normal_flips
+            If False, a flip that results in a face inverting, will not be
+            performed (default = False).
 
         Returns
         -------
@@ -1397,9 +1687,10 @@ class ManifoldSurface(NonManifoldSurface):
 
 
         """
+        edges = np.asarray(edges)
         assert edges.ndim == 2 and edges.shape[1] == 2
         v, f, fid, v_pmap, f_pmap = pmp.flip_edges(
-            self.vertices, self.faces, edges, self.face_id
+            self.vertices, self.faces, edges, allow_normal_flips, self.face_id
         )
         vd = dict(original_id=v_pmap)
         fd = dict(original_id=f_pmap)
@@ -1428,13 +1719,13 @@ class ManifoldSurface(NonManifoldSurface):
         A : scipy.sparse.csr_matrix
             Sparse matrix of shape (n_vertices, n_vertices).
         """
-        face_index = np.repeat(np.arange(self.n_faces),3)
+        face_index = np.repeat(np.arange(self.n_faces), 3)
         if one_based_index:
             face_index += 1
         return scipy.sparse.csr_array((face_index, self.edges().T))
 
     def hole_fill_refine_fair(self, inplace: bool = False):
-        """Fill, refine and fair holes in the surface.
+        """Fill, refine and fair holes in `self`.
 
         Notes
         -----
@@ -1464,7 +1755,7 @@ class ManifoldSurface(NonManifoldSurface):
             )
 
     def interpolated_corrected_curvatures(self):
-        """Compute curvature information using CGAL."""
+        """Compute principal, mean, and Gaussian curvatures using CGAL."""
         k1, k2, H, K, k1_vec, k2_vec = pmp.interpolated_corrected_curvatures(
             self.vertices, self.faces
         )
@@ -1472,23 +1763,25 @@ class ManifoldSurface(NonManifoldSurface):
 
     def k_ring_neighbors(
         self,
-        indices: None | npt.NDArray = None,
+        select: None | npt.NDArray = None,
         k: int = 1,
         adj: None | scipy.sparse.csr_array = None,
         connectivity: str = "vertex",
     ):
-        """Compute k-ring neighborhoods.
+        """Compute the k-ring neighborhood(s) of the selection.
 
         Parameters
         ----------
         k : int
             Find the kth ring neighbors.
-        indices : None | npt.NDArray
+        select : None | npt.NDArray
             The indices of the element (e.g., vertices) for which to do the
             neighbor search. Default is for all elements.
         adj : None | scipy.sparse.csr_array
             scipy.sparse adjacency matrix of the vertices. If None, then it is
             computed.
+        connectivity : str
+            The
 
         Returns
         -------
@@ -1519,21 +1812,33 @@ class ManifoldSurface(NonManifoldSurface):
             case _:
                 raise ValueError
 
-        indices = np.arange(n) if indices is None else indices
-        indices = indices[:, None] if indices.ndim == 1 else indices
-        assert indices.ndim == 2, "`indices` must be (n, n_start_indices)"
+        select = np.arange(n) if select is None else select
+        select = select[:, None] if select.ndim == 1 else select
+        assert select.ndim == 2, "`indices` must be (n, n_start_indices)"
 
-        knn, kr = cortech.utils.k_ring_neighbors(k, indices, n, adj.indices, adj.indptr)
+        knn, kr = cortech.utils.k_ring_neighbors(k, select, n, adj.indices, adj.indptr)
 
         return knn, kr
 
-    def keep_largest_connected_component(self, connectivity="face", selection=None, overwrite_original_id: bool = True):
-        return self.keep_n_largest_connected_components(1, connectivity, selection, overwrite_original_id)
+    def keep_largest_connected_component(
+        self,
+        connectivity="face",
+        select: npt.ArrayLike | None = None,
+        overwrite_original_id: bool = True
+    ):
+        return self.keep_n_largest_connected_components(
+            1, connectivity, select, overwrite_original_id
+        )
 
-    def keep_n_largest_connected_components(self, n: int = 1, connectivity="face", selection=None, overwrite_original_id: bool = True):
-        cc, _ = self.connected_components(connectivity, selection)
+    def keep_n_largest_connected_components(
+        self,
+        n: int = 1,
+        connectivity="face",
+        select=None,
+        overwrite_original_id: bool = True,
+    ):
+        cc, _ = self.connected_components(connectivity, select)
         return self.select_faces(cc < n, overwrite_original_id)
-
 
     def interpolate_to_nodes(
         self, vol: npt.NDArray, affine: npt.NDArray, order: int = 3
@@ -1574,9 +1879,22 @@ class ManifoldSurface(NonManifoldSurface):
             vol, vox_coords.T, order=order, mode="constant", cval=0.0, prefilter=True
         )
 
-    def refine(self, density: float = 2.0, faces: npt.NDArray | None = None):
-        v, f = pmp.refine(self.vertices, self.faces, density, faces)
+    def refine(self, density: float = 2.0, select: npt.ArrayLike | None = None):
+        """Refine `self` by subdivision of faces."""
+        select = _ensure_array_is_index(select, self.n_faces)
+        v, f = pmp.refine(self.vertices, self.faces, density, select)
         return self.new(v, f)
+
+    def signed_distance_function(
+        self, cone_angle: float = 60.0, number_of_rays: int = 25
+    ):
+        """Compute the signed distance function (SDF) at each vertex. The SDF
+        approximates the thickness of `self` at each vertex. This is computed
+        by ray tracing in a cone in the anti-normal direction.
+        """
+        return ss.signed_distance_function(
+            self.vertices, self.faces, np.deg2rad(cone_angle), number_of_rays
+        )
 
     def split(self, other: "ManifoldSurface"):
         """Corefine `self` and `other` and duplicate edges on `self` that are
@@ -1601,28 +1919,20 @@ class ManifoldSurface(NonManifoldSurface):
         )
         return self.new(*split_self), other.new(*split_other)
 
-    def split_edges(self, edges):
-        """Split a number of edges. By halfedges (CGAL terminology), we
-        mean a *directed* edge.
-
-        A few checks are performed to verify the validity of the edge collapse
-        but generally it is the responsibility of the user to ensure that the
-        progressive edge collapses will give the desired outcome.
+    def split_edges(self, edges: npt.ArrayLike):
+        """Split a number of edges.
 
         Parameters
         ----------
-        halfedges
-            An array of shape (n,2) where the first and second columns are the
-            sources and targets of the edges, respectively. Edges are collapsed
-            by collapsing the source vertices onto the target vertices.
+        edges
+            Array of size (n, 2) containing vertex pairs defining the edges to
+            split.
 
         Returns
         -------
-        _type_
-            _description_
-
 
         """
+        edges = np.asarray(edges)
         assert edges.ndim == 2 and edges.shape[1] == 2
         v, f, fid, v_pmap, f_pmap = pmp.split_edges(
             self.vertices, self.faces, edges, self.face_id
@@ -1631,15 +1941,16 @@ class ManifoldSurface(NonManifoldSurface):
         fd = dict(original_id=f_pmap)
         return self.new(v, f, face_id=fid, vertex_data=vd, face_data=fd)
 
-    def split_long_edges(self, sizing, selected_edges=None, face_id=None):
+    def split_long_edges(self, sizing: float, select=None, face_id=None):
         """
 
         Parameters
         ----------
         sizing :
             Edges are split so that no edge is longer than this value.
-        selected_edges
-            Array of size (n,2) containing vertex indices defining edges. If
+        select
+            Restrict edge splitting to these edges. Array of size (n, 2)
+            containing vertex indices defining edges. If
             None, all edges.
 
         Returns
@@ -1648,12 +1959,12 @@ class ManifoldSurface(NonManifoldSurface):
 
         """
         face_id = self._check_face_id(face_id)
-        v,f,fid,orig_vid,orig_fid = pmp.split_long_edges(
-            self.vertices, self.faces, sizing, face_id, selected_edges
+        v, f, fid, orig_vid, orig_fid = pmp.split_long_edges(
+            self.vertices, self.faces, sizing, face_id, select
         )
         vd = dict(original_id=orig_vid)
         fd = dict(original_id=orig_fid)
-        return self.new(v,f,face_id=fid,vertex_data=vd,face_data=fd)
+        return self.new(v, f, face_id=fid, vertex_data=vd, face_data=fd)
 
     def split_with_plane(self, p, d, inplace: bool = False):
         """Split the surface at a plane defined by a point `p` and a direction
@@ -1683,9 +1994,9 @@ class ManifoldSurface(NonManifoldSurface):
         else:
             return self.new(v, f)
 
-    def repair(self, inplace: bool = False):
-        """Repair the surface mesh as polygon soup."""
-        raise NotImplementedError("This method does not currently work")
+    # def repair(self, inplace: bool = False):
+    #     """Repair the surface mesh as polygon soup."""
+    #     raise NotImplementedError("This method does not currently work")
         # v, f = pmp.repair_mesh(self.vertices, self.faces)
         # if inplace:
         #     self.vertices = v
@@ -1699,14 +2010,21 @@ class ManifoldSurface(NonManifoldSurface):
         edge_length_min: float,
         edge_length_max: float,
         face_is_selected: npt.ArrayLike | None = None,
+        vertex_is_constrained: npt.ArrayLike | None = None,
         edge_is_constrained: npt.ArrayLike | None = None,
         *,
         n_iter: int = 1,
         relative: bool = False,
-        protect_constraints: bool = True,
+        protect_constraints: bool = False,
+        collapse_constraints: bool = True,
+        do_split: bool = True,
+        do_collapse: bool = True,
+        do_flip: bool = True,
+        number_of_relaxation_steps: int = 1,
+        disallow_surface_crossing: bool = False,
         inplace: bool = False,
     ):
-        """_summary_
+        """Isotropic remeshing using a curvature adaptive sizing field.
 
         Parameters
         ----------
@@ -1749,22 +2067,137 @@ class ManifoldSurface(NonManifoldSurface):
             edge_length_min = edge_length_min * edge_norm_mean
             edge_length_max = edge_length_max * edge_norm_mean
 
-        v, f = pmp.adaptive_remeshing(
+        if face_is_selected is not None:
+            face_is_selected = _ensure_array_is_index(face_is_selected, self.n_faces)
+        if vertex_is_constrained is not None:
+            vertex_is_constrained = _ensure_array_is_index(
+                vertex_is_constrained, self.n_vertices
+            )
+
+        v, f, fid, v_pmap, f_pmap = pmp.adaptive_remeshing(
             self.vertices,
             self.faces,
             error_tol,
             edge_length_min,
             edge_length_max,
+            self.face_id,
             face_is_selected,
+            vertex_is_constrained,
             edge_is_constrained,
             n_iter,
             protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
         )
         if inplace:
             self.vertices = v
             self.faces = f
+            self.face_id = fid
+            self.data.vertex["original_id"] = v_pmap
+            self.data.face["original_id"] = f_pmap
+            return self
         else:
-            return self.new(v, f)
+            vd = dict(original_id=v_pmap)
+            fd = dict(original_id=f_pmap)
+            return self.new(v, f, face_id=fid, vertex_data=vd, face_data=fd)
+
+    def custom_remeshing(
+        self,
+        sizing: npt.ArrayLike,
+        face_is_selected: npt.ArrayLike | None = None,
+        vertex_is_constrained: npt.ArrayLike | None = None,
+        edge_is_constrained: npt.ArrayLike | None = None,
+        *,
+        n_iter: int = 1,
+        # relative: bool = False,
+        protect_constraints: bool = False,
+        collapse_constraints: bool = True,
+        do_split: bool = True,
+        do_collapse: bool = True,
+        do_flip: bool = True,
+        number_of_relaxation_steps: int = 1,
+        disallow_surface_crossing: bool = False,
+        inplace: bool = False,
+    ):
+        """Isotropic remeshing using a custom sizing field.
+
+        Parameters
+        ----------
+        custom :
+            Custom sizing field. One value per vertex.
+        n_iter : int, optional
+            _description_, by default 1
+        protect_constraints : bool, optional
+            If true, the edges set as constrained in edge_is_constrained
+            (or by default the boundary edges) are neither split nor collapsed
+            during remeshing.
+        face_is_selected : npt.ArrayLike | None, optional
+            Remesh only a subset of the faces in `self`.
+        edge_is_constrained: npt.ArrayLike | None = None
+            Do not remesh these edges.
+            * A constrained edge can be split or collapsed, but not flipped,
+                nor its endpoints moved by smoothing.
+            * Sub-edges generated by splitting are set to be constrained.
+            * Patch boundary edges (i.e. incident to only one face in the
+                range) are always considered as constrained edges.
+        relative : bool, optional
+            If true, `error_tol`, `edge_length_min` and `edge_length_max` are
+            considered as a factors with which to scale the mean edge length of
+            the current surface rather than an absolute values.
+        inplace : bool, optional
+            _description_, by default False
+
+        Returns
+        -------
+        _type_
+            _description_
+        """
+        assert len(sizing) == self.n_vertices
+        # if relative:
+        #     edge_norm_mean = self.edges_norm().mean()
+        #     error_tol = error_tol * edge_norm_mean
+        #     edge_length_min = edge_length_min * edge_norm_mean
+        #     edge_length_max = edge_length_max * edge_norm_mean
+
+        if face_is_selected is not None:
+            face_is_selected = _ensure_array_is_index(face_is_selected, self.n_faces)
+        if vertex_is_constrained is not None:
+            vertex_is_constrained = _ensure_array_is_index(
+                vertex_is_constrained, self.n_vertices
+            )
+
+        v, f, fid, v_pmap, f_pmap = pmp.custom_remeshing(
+            self.vertices,
+            self.faces,
+            sizing,
+            self.face_id,
+            face_is_selected,
+            vertex_is_constrained,
+            edge_is_constrained,
+            n_iter,
+            protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
+        )
+        if inplace:
+            self.vertices = v
+            self.faces = f
+            self.face_id = fid
+            self.data.vertex["original_id"] = v_pmap
+            self.data.face["original_id"] = f_pmap
+            return self
+        else:
+            vd = dict(original_id=v_pmap)
+            fd = dict(original_id=f_pmap)
+            return self.new(v, f, face_id=fid, vertex_data=vd, face_data=fd)
 
     def isotropic_remeshing(
         self,
@@ -1781,44 +2214,59 @@ class ManifoldSurface(NonManifoldSurface):
         do_collapse: bool = True,
         do_flip: bool = True,
         number_of_relaxation_steps: int = 1,
+        disallow_surface_crossing: bool = False,
         inplace: bool = False,
     ):
-        """_summary_
+        """Isotropic remeshing using a uniform sizing field.
 
-        In the `original_id` maps, -1 marks a new vertex or face.
+        Adds `original_id` fields to vertex and face data where -1 marks a new
+        vertex or face.
 
         Parameters
         ----------
         target_edge_length : float
-            _description_
-        n_iter : int, optional
-            _description_, by default 1
-        face_is_selected : npt.ArrayLike | None, optional
-            Remesh only a subset of the faces in `self`.
-        edge_is_constrained: npt.ArrayLike | None = None
+            This remeshing uses a uniform sizing field where this value
+            specifies the desired (global) target edges length in output.
+        face_is_selected : npt.ArrayLike | None
+            Remesh only this subset of faces.
+        vertex_is_constrained : npt.ArrayLike | None
+
+        edge_is_constrained: npt.ArrayLike | None
             Do not remesh these edges.
             * A constrained edge can be split or collapsed, but not flipped,
                 nor its endpoints moved by smoothing.
             * Sub-edges generated by splitting are set to be constrained.
             * Patch boundary edges (i.e. incident to only one face in the
                 range) are always considered as constrained edges.
+        n_iter : int, optional
+            Number of remeshing iterations (default = 1)
         relative : bool, optional
             If true, `target_edge_length` is considered as a factor with which
             to scale the mean edge length of the current surface rather than
             an absolute value.
-        protect_constraints : bool, optional
+        collapse_constraints : bool
+            Allow collapse of constrained edges.
+        do_split : bool
+            Allow face splits during remeshing.
+        do_collapse : bool
+            Allow face collapse during remeshing.
+        do_flip : bool
+            Allow face flips during remeshing.
+        protect_constraints : bool
             If true, the edges set as constrained in edge_is_constrained
             (or, by default, the boundary edges) are neither split nor
             collapsed during remeshing.
+        number_of_relaxation_steps : 1
+            Number of Laplacian smoothing
         inplace : bool, optional
             _description_, by default False
 
         Returns
         -------
-        _type_
-            _description_
+        A remeshed instance of self.
 
-
+        Notes
+        -----
         """
         if relative:
             target_edge_length = target_edge_length * self.edges_norm().mean()
@@ -1826,7 +2274,9 @@ class ManifoldSurface(NonManifoldSurface):
         if face_is_selected is not None:
             face_is_selected = _ensure_array_is_index(face_is_selected, self.n_faces)
         if vertex_is_constrained is not None:
-            vertex_is_constrained = _ensure_array_is_index(vertex_is_constrained, self.n_vertices)
+            vertex_is_constrained = _ensure_array_is_index(
+                vertex_is_constrained, self.n_vertices
+            )
 
         v, f, fid, v_pmap, f_pmap = pmp.isotropic_remeshing(
             self.vertices,
@@ -1843,6 +2293,7 @@ class ManifoldSurface(NonManifoldSurface):
             do_collapse,
             do_flip,
             number_of_relaxation_steps,
+            disallow_surface_crossing,
         )
         if inplace:
             self.vertices = v
@@ -1855,7 +2306,6 @@ class ManifoldSurface(NonManifoldSurface):
             vd = dict(original_id=v_pmap)
             fd = dict(original_id=f_pmap)
             return self.new(v, f, face_id=fid, vertex_data=vd, face_data=fd)
-
 
     def remeshing_with_projection(
         self, method="isotropic", tris=None, weights=None, data=None, **kwargs
@@ -1871,7 +2321,7 @@ class ManifoldSurface(NonManifoldSurface):
                 raise ValueError(f"Invalid `method` {method}.")
 
         if tris is not None and weights is not None:
-            v = np.sum(self.as_mesh(tris) * weights[..., None], 1)
+            v = np.sum(self.mesh(tris) * weights[..., None], 1)
         else:
             v = self.vertices
         tris_on_sr, weights_on_sr, _, _ = sr.project_points(v)
@@ -1883,7 +2333,6 @@ class ManifoldSurface(NonManifoldSurface):
             data_proj = np.sum(data[self.faces[tris_on_self]] * w_on_self, 1)
             return sr, tris_on_sr, weights_on_sr, data_proj
 
-
     def inflate(self):
         raise NotImplementedError
 
@@ -1891,11 +2340,13 @@ class ManifoldSurface(NonManifoldSurface):
         raise NotImplementedError
 
     def orient(self, outward_orientation: bool = True):
-        v, f = pmp.orient(self.vertices, self.faces, outward_orientation),
+        """Ensure that the surface is consistently oriented."""
+        v, f = pmp.orient(self.vertices, self.faces, outward_orientation)
         return self.new(v, f, keep_vertex_data=True, keep_face_data=True)
 
-    def points_inside(self, points, on_boundary_is_inside: bool = True):
+    def points_inside(self, points: npt.ArrayLike, on_boundary_is_inside: bool = True):
         """For each point in `points`, test it is inside the surface or not."""
+        points = np.atleast_2d(points)
         return pmp.points_inside_surface(
             self.vertices, self.faces, points, on_boundary_is_inside
         )
@@ -1985,25 +2436,57 @@ class ManifoldSurface(NonManifoldSurface):
     def remove_almost_degenerate_faces(
         self,
         face_is_selected: npt.ArrayLike | None = None,
-        cap_threshold = -0.9396926207859083,
-        needle_threshold = 4.0,
+        cap_threshold=-0.9396926207859083,
+        needle_threshold=4.0,
+        constrain_border_edges: bool = True,
+        constrain_patch_edges: bool = True,
         vertex_is_constrained: npt.ArrayLike | None = None,
         edge_is_constrained: npt.ArrayLike | None = None,
-        inplace: bool = False
+        inplace: bool = False,
     ):
+        """Remove faces that are caps or needles. Caps are faces with one angle
+        close to 180 degrees; needles are faces where the longest/shortest edge
+        ratio is high.
+
+        Parameters
+        ----------
+        cap_threshold : float
+            Specified as the cosine to the angle (i.e., -1 corresponds to 180
+            degrees), this gives the threshold below which a triangle is
+            considered a cap.
+        needle_threshold : float
+            The longest/shortest edge ratio above which a triangle is
+            considered a needle.
+        edge_is_constrained:
+        """
         if face_is_selected is not None:
             face_is_selected = _ensure_array_is_index(face_is_selected, self.n_faces)
         if vertex_is_constrained is not None:
-            vertex_is_constrained = _ensure_array_is_index(vertex_is_constrained, self.n_vertices)
+            vertex_is_constrained = _ensure_array_is_index(
+                vertex_is_constrained, self.n_vertices
+            )
+        if constrain_border_edges:
+            border = self.find_border_edges().reshape(-1, 2)
+        else:
+            border = np.empty((0, 2))
+        if constrain_patch_edges:
+            patch = self.find_patch_edges().reshape(-1, 2)
+        else:
+            patch = np.empty((0, 2))
 
-        v,f,vid,fid = pmp.remove_almost_degenerate_faces(
+        ec = np.concat((border, patch))
+
+        if edge_is_constrained is not None:
+            ec = np.concat((edge_is_constrained, ec))
+
+        v, f, vid, fid = pmp.remove_almost_degenerate_faces(
             self.vertices,
             self.faces,
             face_is_selected,
             cap_threshold,
             needle_threshold,
             vertex_is_constrained,
-            edge_is_constrained
+            ec,
         )
         if inplace:
             raise NotImplementedError("need to handle face_id ...")
@@ -2015,13 +2498,22 @@ class ManifoldSurface(NonManifoldSurface):
         else:
             vd = dict(original_id=vid)
             fd = dict(original_id=fid)
-            return self.new(v, f, vertex_data=vd, face_data=fd)
+            return self.new(
+                v, f, face_id=self.face_id[fid], vertex_data=vd, face_data=fd
+            )
 
     def remove_self_intersections(self, select: npt.ArrayLike | None = None):
-        """Remove self-intersections. This process includes smoothing and
-        possibly hole filling.
+        """Attempt to remove self-intersections by smoothing and possibly hole
+        filling.
+
+        Raises
+        ------
+        RuntimeError
+            If unable to remove all self-intersections.
         """
-        v, f, vid, fid = pmp.remove_self_intersections(self.vertices, self.faces, select)
+        v, f, vid, fid = pmp.remove_self_intersections(
+            self.vertices, self.faces, select
+        )
         vd = dict(original_id=vid)
         fd = dict(original_id=fid)
         return self.new(v, f, vertex_data=vd, face_data=fd)
@@ -2108,7 +2600,7 @@ class ManifoldSurface(NonManifoldSurface):
             return self.new(v, f)
 
     def skeletonize(self):
-        """
+        """Return the skeleton (medial axis) of `self`.
 
         vertices :
         edges :
@@ -2225,7 +2717,9 @@ class ManifoldSurface(NonManifoldSurface):
                 self.vertices = array
                 return self
             else:
-                return self.new(array, keep_face_id=True, keep_vertex_data=True, keep_face_data=True)
+                return self.new(
+                    array, keep_face_id=True, keep_vertex_data=True, keep_face_data=True
+                )
         else:
             return array
 
@@ -2463,7 +2957,7 @@ class ManifoldSurface(NonManifoldSurface):
         """
         a = 6.928203230275509  # 4 * sqrt(3.0)
         A = self.face_areas()
-        E = self.edges_norm().reshape(-1,3)
+        E = self.edges_norm().reshape(-1, 3)
         return a * A / np.sum(E**2, -1)  # 0=worst, 1=best
 
     def vertex_normals(self):
@@ -2610,7 +3104,7 @@ class ManifoldSurface(NonManifoldSurface):
         npttris = list(map(len, pttris))
         pttris = np.concatenate(pttris)
 
-        m = self.as_mesh()
+        m = self.mesh()
         v0 = m[:, 0]  # Origin of the triangle
         e0 = m[:, 1] - v0  # s coordinate axis
         e1 = m[:, 2] - v0  # t coordinate axis
@@ -2863,9 +3357,7 @@ class ManifoldSurface(NonManifoldSurface):
             alpha = diag_length / alpha
             offset = diag_length / offset
 
-        v, f = alpha_wrap_3.alpha_wrap_3_surface(
-            v, self.faces, alpha, offset
-        )
+        v, f = alpha_wrap_3.alpha_wrap_3_surface(v, self.faces, alpha, offset)
         return self.new(v, f)
 
     def vertex_and_opposing_edge(self):
@@ -2890,7 +3382,9 @@ class ManifoldSurface(NonManifoldSurface):
         )
         return vertex_edges, vertex_opposite_edge
 
-    def opposing_angles(self, min_edge_length=1e-6, min_angle=1e-3):
+    def opposing_angles(
+        self, faces: npt.ArrayLike | None = None, min_edge_length=1e-6, min_angle=1e-3
+    ):
         """For each face, compute the angle opposite each edge. Optionally,
         integrate the total angle at each vertex
 
@@ -2910,7 +3404,7 @@ class ManifoldSurface(NonManifoldSurface):
         EI = self.edge_pairs
         VI, V = self.vertex_and_opposing_edge()
 
-        m = self.as_mesh()
+        m = self.mesh(faces)
         E = np.stack([m[:, i] - m[:, j] for i, j in EI])
         EN = np.maximum(np.linalg.vector_norm(E, axis=-1), min_edge_length)
 
@@ -3017,7 +3511,9 @@ class ManifoldSurface(NonManifoldSurface):
         if face_is_selected is not None:
             face_is_selected = _ensure_array_is_index(face_is_selected, self.n_faces)
         if vertex_is_constrained is not None:
-            vertex_is_constrained = _ensure_array_is_index(vertex_is_constrained, self.n_vertices)
+            vertex_is_constrained = _ensure_array_is_index(
+                vertex_is_constrained, self.n_vertices
+            )
 
         v, f, fid, v_pmap, f_pmap = pmp.collapse_short_edges(
             self.vertices,
@@ -3402,9 +3898,9 @@ class FixedTopologySurface(ManifoldSurface):
 
 class DeepSurferSurface(FixedTopologySurface):
     def __init__(self, vertices, faces, **kwargs):
-        # this cannot be specified
         assert len(vertices) == 245762
         assert len(faces) == 491520
+        # this cannot be specified
         kwargs["edge_pairs"] = np.array([[0, 1], [1, 2], [2, 0]])
         super().__init__(vertices, faces, **kwargs)
 
@@ -3584,7 +4080,7 @@ class MultiSurface(ManifoldSurface):
         self.n_surfaces, self.n_vertices, self.n_dim = value.shape
         # self._ix_surfaces = np.arange(self.n_surfaces)[:, None]
 
-    def as_mesh(self, subset=None):
+    def mesh(self, subset=None):
         f = self.faces if subset is None else self.faces[subset]
         return self.vertices[np.arange(self.n_surfaces), f]
 
@@ -3784,7 +4280,7 @@ def iterative_smooth_shape_by_curvature_threshold(
                 s.vertices[mask] = s.vertices[mask] - decoupling_amount * n[mask]
 
     # original vertices projected on final (remeshed) surface
-    v = np.sum(s.as_mesh(tri) * weight[..., None], 1)
+    v = np.sum(s.mesh(tri) * weight[..., None], 1)
     # sulc_at_orig = np.sum(sulc_smooth[s.faces[tris1]] * weights1, 1)
 
     # assert not self.does_self_intersect()

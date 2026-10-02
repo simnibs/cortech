@@ -40,6 +40,7 @@ cdef extern from "tetrahedral_remeshing_src.cpp" nogil:
         vector[vector[int]] faces,
         vector[int] faces_pmap,
         vector[double] sizing,
+        vector[vector[int]] edge_is_constrained,
         int n_iterations,
         int nb_neighbors_dim3,
         int nb_neighbors_dim2,
@@ -96,6 +97,7 @@ def remesh_protect_boundary(
     cells_pmap: npt.ArrayLike | None = None,
     faces: npt.ArrayLike | None = None,
     faces_pmap: npt.ArrayLike | None = None,
+    edge_is_constrained: npt.ArrayLike | None = None,
     n_iterations: int = 1,
     int nb_neighbors_dim3 = 30,
     int nb_neighbors_dim2 = 6,
@@ -145,12 +147,8 @@ def remesh_protect_boundary(
     faces = np.array([[]], int) if faces is None else faces
     faces_pmap = np.array([], int) if faces_pmap is None else faces_pmap
     assert len((faces) == len(faces_pmap)) or (faces.size == faces_pmap.size)
-
-    # if (cells_pmap < 1).any():
-    #     warnings.warn("`cells_pmap` contains values smaller than 1. Cells marked as such will be interpreted as being outside of the domain by CGAL!")
-    # if (faces_pmap < 1).any():
-    #     warnings.warn("`faces_pmap` contains values smaller than 1. Cells marked as such will be interpreted as being outside of the domain by CGAL!")
-
+    ecs = np.array([[]],dtype=int) if edge_is_constrained is None else edge_is_constrained
+    assert ecs.ndim == 2
 
     # float64 is required; otherwise numerical problems arise and boundary
     # remeshing tends to fail!
@@ -160,6 +158,8 @@ def remesh_protect_boundary(
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[int] cpp_f_pmap = np.ascontiguousarray(faces_pmap, dtype=np.int32)
     cdef np.ndarray[double] cpp_sizing = np.ascontiguousarray(sizing, dtype=np.float64)
+    cdef np.ndarray[int, ndim=2] cpp_ecs = np.ascontiguousarray(ecs, dtype=np.int32)
+
     cdef VolumeMeshWithPMaps out
 
     out = tetrahedral_remeshing_remesh_protect_boundary(
@@ -169,6 +169,7 @@ def remesh_protect_boundary(
         cpp_f,
         cpp_f_pmap,
         cpp_sizing,
+        cpp_ecs,
         n_iterations,
         nb_neighbors_dim3,
         nb_neighbors_dim2,

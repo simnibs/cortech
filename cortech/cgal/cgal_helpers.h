@@ -60,6 +60,9 @@ namespace cortech
         vector<int> cells_pmap;
     };
 
+    Surface_mesh force_from_polygon_soup(
+        const vector<vector<float>> &vertices,
+        const vector<vector<int>> &faces);
     std::pair<Surface_mesh, vector<Surface_mesh::Vertex_index>> from_polygon_soup_with_vertex_map(
         const vector<vector<float>> &vertices,
         const vector<vector<int>> &faces,

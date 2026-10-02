@@ -7,6 +7,8 @@
 #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
 #include <CGAL/Surface_mesh.h>
 
+#include <CGAL/boost/graph/Euler_operations.h>
+
 #include <cgal_helpers.h>
 
 using K = CGAL::Exact_predicates_inexact_constructions_kernel;
@@ -19,6 +21,45 @@ using Vertex_index = Surface_mesh::Vertex_index;
 using std::vector;
 
 namespace cortech {
+
+
+// Build Surface_mesh manually and force adding faces which will create a
+// non-manifold topology!
+Surface_mesh force_from_polygon_soup(
+    const vector<vector<float>> &vertices,
+    const vector<vector<int>> &faces)
+{
+    Surface_mesh mesh;
+    int n_vertices = vertices.size();
+    int n_faces = faces.size();
+
+    vector<Vertex_index> v2v(n_vertices); // index to Vertex_index
+    for (int i = 0; i < n_vertices; ++i)
+    {
+        auto &v = vertices[i];
+        v2v[i] = mesh.add_vertex(Point_3(v[0], v[1], v[2]));
+    }
+    vector<int> f(3);
+    vector<std::array<Vertex_index,3>> faces_as_vertex_handles;
+    faces_as_vertex_handles.reserve(n_faces);
+    for (int i = 0; i < n_faces; ++i)
+    {
+        auto &f = faces[i];
+        faces_as_vertex_handles.push_back({v2v[f[0]], v2v[f[1]], v2v[f[2]]});
+    }
+    /*
+    mesh.add_face calls CGAL::Euler::add_face internally. If adding a face
+    breaks manifoldness (e.g., creates a pinched vertex), it will simply not
+    add the face (returns null_face pointer).
+    CGAL::Euler::add_faces on the other hand, will add all faces regardless.
+    It doesn't seem to be an official function though.
+    */
+    CGAL::Euler::add_faces(faces_as_vertex_handles, mesh);
+    if (mesh.number_of_faces() < n_faces)
+        throw std::runtime_error("Some faces were not added to the mesh. Please check CGAL::Euler::add_faces.");
+
+    return mesh;
+}
 
 // Build Surface_mesh manually and return the index to Vertex_index mapping
 std::pair<Surface_mesh, vector<Vertex_index>> from_polygon_soup_with_vertex_map(

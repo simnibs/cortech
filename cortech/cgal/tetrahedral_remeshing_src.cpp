@@ -20,8 +20,8 @@
 
 using std::vector;
 
-typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
-typedef CGAL::Tetrahedral_remeshing::Remeshing_triangulation_3<K> Remeshing_triangulation;
+using K = CGAL::Exact_predicates_inexact_constructions_kernel;
+using Remeshing_triangulation = CGAL::Tetrahedral_remeshing::Remeshing_triangulation_3<K>;
 using Tr = Remeshing_triangulation;
 using Vertex_handle = Tr::Vertex_handle;
 
@@ -734,6 +734,7 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
     vector<vector<int>> faces,
     vector<int> faces_pmap,
     vector<double> sizing,
+    vector<vector<int>> edge_is_constrained = {},
     int n_iterations = 1,
     int nb_neighbors_dim3 = 30,
     int nb_neighbors_dim2 = 6,
@@ -747,14 +748,16 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
     }
 
     Tr tr;
-    if (faces.size() == 1 && faces[0].empty()){ // empty vector of vectors
-        std::cout << "NO FACES EXPLICITLY SPECIFIED" << std::endl;
+    if (faces.size() == 1 && faces[0].empty()) // empty vector of vectors
+    {
         tr = CGAL::tetrahedron_soup_to_triangulation_3<Tr>(
             points,
             cells,
             CGAL::parameters::subdomain_indices(std::cref(cells_pmap))
         );
-    } else {
+    }
+    else
+    {
         using Surface_patch_index = typename Tr::Cell::Surface_patch_index;
         using Facet = std::array<int, 3>; // 3 = id
         Facet f;
@@ -775,14 +778,6 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
             .surface_facets(std::cref(facets))
         );
     }
-
-    // Tr tr = CGAL::tetrahedron_soup_to_triangulation_3<Tr>(
-    //     points,
-    //     cells,
-    //     CGAL::parameters::subdomain_indices(std::cref(cells_pmap))
-    //     .surface_facets(std::cref(facets))
-    // );
-
 
     // I think is_valid is also called as part of c3t3.set_triangulation()
     if (check_triangulation)
@@ -838,8 +833,6 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
             if (k == i)
                 continue;
             vh = c->vertex(k);
-            // vh->set_dimension(2);
-            // vh->set_index(vertex_index);
             outer_vertices.insert(vh);
         }
 
@@ -854,6 +847,19 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
             }
     }
 
+    EdgeSet ecs;
+    if (!edge_is_constrained.empty() && !edge_is_constrained[0].empty()){
+        std::unordered_map<int, Tr::Vertex_handle> v2v;
+        int i = 0;
+        for (Tr::Vertex_handle v : tr.finite_vertex_handles()){
+            v2v[i++] = v;
+        }
+        for (auto e : edge_is_constrained){
+            ecs.insert(EdgePair(v2v[e[0]], v2v[e[1]]));
+        }
+    }
+    outer_edges.merge(ecs);
+
     CGAL::Boolean_property_map<EdgeSet> edge_pmap(outer_edges);
     CGAL::Boolean_property_map<FacetSet> facet_pmap(outer_facets);
     CGAL::Boolean_property_map<VertexSet> vertex_pmap(outer_vertices);
@@ -867,10 +873,18 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
 
     // sizing map used for vertices and edges on the outer boundary
     // since the vertices are constrained, their dimension property will be set
-    // to 0 by init_c3t3 in the Remesher
-    std::unordered_map<Tr::Vertex_handle, FT> size_map_dim_0;
+    // to 0 by init_c3t3 in Remesher
+
+    auto cp = tr.geom_traits().construct_point_3_object();
+    auto midpt = tr.geom_traits().construct_midpoint_3_object();
+
+    std::unordered_set<Tr::Point> size_map_dim_0;
+
     for (Tr::Vertex_handle v : outer_vertices)
-        size_map_dim_0[v] = FT(1e6);
+        size_map_dim_0.insert(cp(tr.point(v)));
+
+    for (EdgePair e : outer_edges)
+        size_map_dim_0.insert(midpt(tr.point(e.first), tr.point(e.second)));
 
     CGAL::Precomputed_sizing_field<Tr> sizing_field(
         tr, size_map, size_map_dim_0, nb_neighbors_dim3, nb_neighbors_dim2
@@ -885,7 +899,7 @@ cortech::VolumeMeshWithPMaps tetrahedral_remeshing_remesh_protect_boundary(
             .facet_is_constrained_map(facet_pmap)
             .edge_is_constrained_map(edge_pmap));
 
-            using C3t3 = CGAL::Mesh_complex_3_in_triangulation_3<Tr, int, int>;
+    using C3t3 = CGAL::Mesh_complex_3_in_triangulation_3<Tr, int, int>;
     C3t3 c3t3;
     c3t3.set_triangulation(tr);
 

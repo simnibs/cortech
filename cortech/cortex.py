@@ -355,7 +355,7 @@ class Hemisphere:
             if k == "reference":
                 s_remesh[k] = ref_remesh
             else:
-                vs = np.sum(v.as_mesh()[tris] * weights[..., None], -2)
+                vs = np.sum(v.mesh()[tris] * weights[..., None], -2)
                 s_remesh[k] = v.new(vs, ref_remesh.faces)
 
         if inplace:

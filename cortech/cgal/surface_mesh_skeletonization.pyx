@@ -1,4 +1,3 @@
-from libcpp.pair cimport pair
 from libcpp.vector cimport vector
 import numpy as np
 import numpy.typing as npt

@@ -81,6 +81,15 @@ pmp = python.extension_module(
     subdir: cgal_dir,
 )
 
+ss = python.extension_module(
+    'surface_mesh_segmentation',
+    cython_gen_cpp.process('surface_mesh_segmentation.pyx'),
+    cpp_args: [cpp_cgal_macros],
+    dependencies: [numpy_dep, cgal_dep, cgal_helpers_dep],
+    install: true,
+    subdir: cgal_dir,
+)
+
 sms = python.extension_module(
     'surface_mesh_simplification',
     cython_gen_cpp.process('surface_mesh_simplification.pyx'),

@@ -55,31 +55,40 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         IndexVector faces,
         IndexVector constrained_edges,
     ) except +
+    vector[vector[int]] pmp_detect_sharp_edges(
+        PointVector vertices, IndexVector faces, float angle
+    ) except +
     SurfaceMesh pmp_duplicate_non_manifold_edges_in_polygon_soup(
         PointVector vertices, IndexVector faces
     ) except +
 
-    SurfaceMesh pmp_duplicate_non_manifold_vertices(
+    SurfaceMeshWithPMaps pmp_duplicate_non_manifold_vertices(
         PointVector vertices, IndexVector faces
     ) except +
-    pair[pair[SurfaceMeshWithPMaps,SurfaceMeshWithPMaps], pair[vector[vector[int]], vector[vector[int]]]] pmp_corefine(
-        PointVector v0, IndexVector f0, PointVector v1, IndexVector f1, cppbool return_intersection_edges
+    pair[pair[SurfaceMeshWithFaceidAndPMaps,SurfaceMeshWithFaceidAndPMaps], pair[vector[vector[int]], vector[vector[int]]]] pmp_corefine(
+        PointVector v0, IndexVector f0, PointVector v1, IndexVector f1, vector[int], vector[int], cppbool return_intersection_edges
     ) except +
-    cppbool pmp_does_triangle_soup_self_intersect(PointVector vertices, IndexVector faces) except +
+    cppbool pmp_do_intersect(
+        PointVector vertices0, IndexVector faces0, PointVector vertices1, IndexVector faces1,
+    ) except +
+    cppbool pmp_does_triangle_soup_self_intersect(
+        PointVector vertices,
+        vector[vector[unsigned int]] faces
+    ) except +
     IndexVector pmp_extract_boundary_cycles(
         PointVector vertices, IndexVector faces
     ) except +
     PointVector pmp_fair(
-        PointVector vertices, IndexVector faces,vector[int] indices, int continuity
+        PointVector vertices, IndexVector faces, vector[int] indices, int continuity
     ) except +
 
     SurfaceMeshWithFaceidAndPMaps pmp_flip_edges(
         PointVector vertices,
         IndexVector faces,
         IndexVector edges,
+        cppbool allow_normal_flips,
         vector[int] face_id,
     ) except +
-
 
     SurfaceMesh pmp_hole_fill_refine_fair(
         PointVector vertices, IndexVector faces
@@ -317,6 +326,10 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         int n_iter
     ) except +
 
+    IndexVector pmp_triangle_soup_self_intersections(
+        PointVector vertices, IndexVector faces
+    ) except +
+
     vector[vector[float]] pmp_interpolated_corrected_curvatures(
         PointVector vertices,
         IndexVector faces,
@@ -493,23 +506,66 @@ def connected_components(
 
     return component_label, component_size
 
-def corefine(vertices0, faces0, vertices1, faces1, return_intersection_edges: bool):
+def detect_sharp_edges(vertices, faces, angle: float = 60.0):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef vector[vector[int]] cpp_e
+    cpp_e = pmp_detect_sharp_edges(cpp_v, cpp_f, angle)
+    return np.array(cpp_e, dtype=int)
+
+def corefine(
+    vertices0,
+    faces0,
+    vertices1,
+    faces1,
+    face_id0,
+    face_id1,
+    return_intersection_edges: bool
+):
+    cdef np.ndarray[float, ndim=2] cpp_v0 = np.ascontiguousarray(vertices0, dtype=np.float32)
+    cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f0 = np.ascontiguousarray(faces0, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid0 = np.ascontiguousarray(face_id0, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid1 = np.ascontiguousarray(face_id1, dtype=np.int32)
+    cdef pair[pair[SurfaceMeshWithFaceidAndPMaps,SurfaceMeshWithFaceidAndPMaps], pair[vector[vector[int]], vector[vector[int]]]] out
+
+    out = pmp_corefine(cpp_v0, cpp_f0, cpp_v1, cpp_f1, cpp_fid0, cpp_fid1, return_intersection_edges)
+    vf0 = _from_SurfaceMeshWithFaceidAndPMaps(out.first.first)
+    vf1 = _from_SurfaceMeshWithFaceidAndPMaps(out.first.second)
+    e0 = np.array(out.second.first, dtype=int)
+    e1 = np.array(out.second.second, dtype=int)
+
+    return vf0, vf1, e0, e1
+
+def do_intersect(
+    vertices0: npt.ArrayLike,
+    faces0: npt.ArrayLike,
+    vertices1: npt.ArrayLike,
+    faces1: npt.ArrayLike
+) -> bool:
+    """Return true if there exists a face in mesh0 and a face in mesh1 which interesect.
+
+    Parameters
+    ----------
+    vertices0 : npt.ArrayLike
+    faces0 : npt.ArrayLike
+    vertices1 : npt.ArrayLike
+    faces1 : npt.ArrayLike
+
+    Returns
+    -------
+
+    """
     cdef np.ndarray[float, ndim=2] cpp_v0 = np.ascontiguousarray(vertices0, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f0 = np.ascontiguousarray(faces0, dtype=np.int32)
     cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
-    cdef pair[pair[SurfaceMeshWithPMaps,SurfaceMeshWithPMaps], pair[vector[vector[int]], vector[vector[int]]]] out
-    out = pmp_corefine(cpp_v0, cpp_f0, cpp_v1, cpp_f1, return_intersection_edges)
-    #return _from_SurfaceMesh(out.first), _from_SurfaceMesh(out.second)
-    vf0 = _from_SurfaceMeshWithPMaps(out.first.first)
-    vf1 = _from_SurfaceMeshWithPMaps(out.first.second)
-    e0 = np.array(out.second.first, dtype=int)
-    e1 = np.array(out.second.second, dtype=int)
-    return vf0, vf1, e0, e1
+    return pmp_do_intersect(cpp_v0, cpp_f0, cpp_v1, cpp_f1)
 
 def does_triangle_soup_self_intersect(vertices: npt.NDArray, faces: npt.NDArray) -> bool:
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
-    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.uint32)
     return pmp_does_triangle_soup_self_intersect(cpp_v, cpp_f)
 
 def duplicate_non_manifold_edges_in_polygon_soup(vertices,faces):
@@ -522,9 +578,9 @@ def duplicate_non_manifold_edges_in_polygon_soup(vertices,faces):
 def duplicate_non_manifold_vertices(vertices, faces):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef SurfaceMesh out
+    cdef SurfaceMeshWithPMaps out
     out = pmp_duplicate_non_manifold_vertices(cpp_v, cpp_f)
-    return _from_SurfaceMesh(out)
+    return _from_SurfaceMeshWithPMaps(out)
 
 def extract_boundary_cycles(vertices: npt.NDArray, faces: npt.NDArray):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -549,6 +605,7 @@ def flip_edges(
     vertices: npt.ArrayLike,
     faces: npt.ArrayLike,
     edges: npt.ArrayLike,
+    allow_normal_flips: bool = False,
     face_id: npt.ArrayLike | None = None,
 ):
     """Flip edges.
@@ -579,7 +636,7 @@ def flip_edges(
     cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
     cdef SurfaceMeshWithFaceidAndPMaps out
 
-    out = pmp_flip_edges(cv, cf, ce, cpp_fid)
+    out = pmp_flip_edges(cv, cf, ce, allow_normal_flips, cpp_fid)
 
     return _from_SurfaceMeshWithFaceidAndPMaps(out)
 
@@ -1542,6 +1599,30 @@ def tangential_relaxation(
     v = pmp_tangential_relaxation(cpp_v, cpp_f, cpp_constrained_vertices, n_iter)
 
     return np.array(v, dtype=float)
+
+def triangle_soup_self_intersections(
+    vertices: npt.ArrayLike, faces: npt.ArrayLike
+) -> npt.NDArray:
+    """Compute the intersecting pairs of triangles in a surface mesh.
+
+    Parameters
+    ----------
+    vertices : npt.ArrayLike
+
+    faces : npt.ArrayLike
+
+    Returns
+    -------
+    intersecting_pairs : npt
+
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef IndexVector intersecting_pairs
+
+    intersecting_pairs = pmp_triangle_soup_self_intersections(cpp_v, cpp_f)
+
+    return np.array(intersecting_pairs, dtype=int)
 
 # def volume_connected_components(faces, do_orientation_tests = False, do_self_intersection_tests = False):
 #     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)

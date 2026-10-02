@@ -1,8 +1,10 @@
 python_sources = [
     '__init__.py',
+    'complex.py',
     'constants.py',
     'cortex.py',
     'graph.py',
+    'polyline.py',
     'sphere_utils.py',
     'surface.py',
     'utils.py',

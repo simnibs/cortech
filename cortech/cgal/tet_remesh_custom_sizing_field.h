@@ -33,6 +33,7 @@
 #include <limits>
 #include <set>
 #include <vector>
+#include <unordered_set>
 
 
 namespace CGAL
@@ -57,6 +58,7 @@ private:
   typedef typename Tr::Cell_handle              Cell_handle;
   typedef typename Tr::Cell::Surface_patch_index Surface_patch_index;
   typedef typename std::unordered_map<Vertex_handle, FT> Size_map;
+  typedef typename std::unordered_set<Tr_point> Size_set;
 
   struct Point_with_info
   {
@@ -91,7 +93,7 @@ public:
     Precomputed_sizing_field(
     const Tr& tr,
     const Size_map& size_map,
-    const Size_map& size_map_dim0,
+    const Size_set& size_map_dim0,
     int nb_neighbors_dim3 = 30,
     int nb_neighbors_dim2 = 6
 )
@@ -151,7 +153,7 @@ private:
             points.push_back(Point_with_info{ centroid(tr.tetrahedron(c)), size, 3 });
 
         }
-        std::cout << "kdtree of dim = 3 has size " << points.size() << std::endl;
+        // std::cout << "kdtree of dim = 3 has size " << points.size() << std::endl;
 
         return points;
         }
@@ -191,141 +193,19 @@ private:
                 }
             }
         }
-        std::cout << "kdtree of dim = 2 has size " << points.size() << std::endl;
         return points;
     }
 
     std::vector<Point_with_info> points_with_info_from_size_map(
-        const Tr& tr, const Size_map& size_map) const
+        const Tr& tr, const Size_set& size_map) const
     {
         // dim = 0 : "corners"
-        namespace Tet_remeshing = CGAL::Tetrahedral_remeshing;
-        auto cp = tr.geom_traits().construct_point_3_object();
-        auto midpt = tr.geom_traits().construct_midpoint_3_object();
-
         std::vector<Point_with_info> points;
-        // points.reserve(size_map.size());
-        for (auto const& [v, size] : size_map)
-        {
-            if (CGAL::is_zero(size))
-                continue;
-            points.push_back(Point_with_info{ cp(tr.point(v)), FT(size), 0});
-        }
-
-        for (const Cell_handle c : tr.finite_cell_handles())
-        {
-            // on complex edges
-            for (const Edge& e : Tet_remeshing::cell_edges(c, tr))
-            {
-            auto vp = Tet_remeshing::make_vertex_pair(e);
-            if (auto a = size_map.find(vp.first); a != size_map.end())
-            {
-                if (auto b = size_map.find(vp.second); b != size_map.end())
-                {
-                    FT size = 0.5 * (a->second + b->second);
-                    // if(get(ecmap, Tet_remeshing::make_vertex_pair(e)))
-                    if (CGAL::is_zero(size))
-                        continue;
-                    points.push_back(Point_with_info{midpt(tr.segment(e)), size, 0});
-                }
-            }
-            }
-        }
-        std::cout << "kdtree of size map has size = " << points.size() << std::endl;
+        points.reserve(size_map.size());
+        for (auto const& p : size_map)
+            points.push_back(Point_with_info{p, FT(1e6), 0});
+        // std::cout << "kdtree of size map has size = " << points.size() << std::endl;
         return points;
-    }
-
-    // std::vector<Point_with_info> points_with_info_dim0(
-    //     const Tr& tr, const Size_map& size_map) const
-    // {
-    //     // dim = 0 : "corners"
-    //     namespace Tet_remeshing = CGAL::Tetrahedral_remeshing;
-    //     auto cp = tr.geom_traits().construct_point_3_object();
-
-    //     std::vector<Point_with_info> points;
-    //     // points.reserve(tr.number_of_vertices());
-    //     for (const Vertex_handle v : tr.finite_vertex_handles())
-    //     {
-    //         if (v->in_dimension() == 0)
-    //         {
-    //             FT size = size_map.at(v);
-    //             if (CGAL::is_zero(size))
-    //                 continue;
-    //             points.push_back(Point_with_info{ cp(tr.point(v)), size, 0 });
-    //         }
-    //     }
-    //     // points.resize();
-    //     std::cout << "kdtree of dim = 0 has size " << points.size() << std::endl;
-    //     return points;
-    // }
-
-
-    std::vector<Point_with_info> points_with_info(
-        const Tr& tr,
-        const int dim,
-        const Size_map& size_map) const
-    {
-    namespace Tet_remeshing = CGAL::Tetrahedral_remeshing;
-    auto cp = tr.geom_traits().construct_point_3_object();
-
-    std::size_t n = tr.number_of_vertices() + tr.number_of_finite_cells();
-
-    std::vector<Point_with_info> points;
-    points.reserve(n);
-    for (const Vertex_handle v : tr.finite_vertex_handles())
-    {
-      if(  (dim == 3 && dim == v->in_dimension())//inside volume
-        || (dim < 3  && v->in_dimension() < 3))  //on surface
-      {
-        FT size = size_map.at(v);
-        if (CGAL::is_zero(size))
-          continue;
-        points.push_back(Point_with_info{ cp(tr.point(v)), size, v->in_dimension() });
-      }
-    }
-
-    // add internal points
-    for (const Cell_handle c : tr.finite_cell_handles())
-    {
-        // inside cells
-        if(dim == 3)
-        {
-            const FT size = average_around_cell(tr, c, size_map);
-            if (CGAL::is_zero(size))
-            continue;
-            points.push_back(Point_with_info{ centroid(tr.tetrahedron(c)), size, 3 });
-        }
-        // else
-
-        //   {
-        //     // on surface facets
-        //     for (int i = 0; i < 4; ++i)
-        //     {
-        //       const Cell_handle cn = c->neighbor(i);
-        //       if(  get(cell_selector, c) != get(cell_selector, cn)
-        //         || get(fcmap, Facet(c, i))
-        //         || c->is_facet_on_surface(i) )
-        //       {
-        //         const FT size = average_edge_length_2(c, i, tr, size_map);
-        //         if (CGAL::is_zero(size))
-        //           continue;
-        //         points.push_back(Point_with_info{ centroid(tr.triangle(c, i)), size, 2 });
-        //       }
-        //     }
-        //     // on complex edges
-        //     for (const Edge& e : Tet_remeshing::cell_edges(c, tr))
-        //     {
-        //       if(get(ecmap, Tet_remeshing::make_vertex_pair(e)))
-        //       {
-        //         const FT size = Tet_remeshing::approximate_edge_length(e, tr);
-        //         if (CGAL::is_zero(size))
-        //           continue;
-        //         points.push_back(Point_with_info{midpt(tr.segment(e)), size, 1 });
-        //       }
-        //     }
-        //   }
-    }
-    return points;
     }
 
     const Kd_tree& kd_tree(const int dim) const
