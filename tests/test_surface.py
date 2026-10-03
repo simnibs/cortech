@@ -463,7 +463,7 @@ class TestSphere:
 
         # the triangles of the surface being morphed *to* are unused so just
         # generate some random ones
-        dest_points = np.sum(sphere_reg.as_mesh() * weights[..., None], 1)
+        dest_points = np.sum(sphere_reg.mesh() * weights[..., None], 1)
 
         dest_field = sphere_reg.set_projection_and_resample(
             dest_points, source_field, method=method
