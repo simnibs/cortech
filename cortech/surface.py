@@ -246,6 +246,7 @@ class TriangleSoup:
         """
         tnormals = self._face_normals_unnormalized()
         tnormals /= np.linalg.norm(tnormals, axis=1, keepdims=True)
+
         return tnormals
 
     @classmethod

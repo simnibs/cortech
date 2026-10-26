@@ -88,6 +88,8 @@ class Hemisphere:
         self,
         nbhd_size: int = 7,
         max_thick: float = 5.0,
+        return_direction=False,
+        return_normalized=True
     ) -> tuple[npt.NDArray, npt.NDArray]:
         """Calculate cortical thickness using the FreeSurfer algorithm.
 
@@ -125,7 +127,13 @@ class Hemisphere:
         )
 
         thickness = np.minimum(0.5 * (w2p + gw), max_thick)
-        return thickness, directions
+        if return_direction:
+            if return_normalized:
+                return thickness, directions
+            else:
+                return thickness, w2p[:, None] * directions
+        else:
+            return thickness
 
     def compute_average_curvature(
         self,
@@ -358,7 +366,7 @@ class Hemisphere:
 
         self.infra_supra_model[f"{model_name[0]}_{model_name[1]}"] = params
 
-    def _layer_from_distance_fraction(self, f: float | npt.NDArray = 0.5, direction: npt.NDArray=None):
+    def _layer_from_distance_fraction(self, f: float | npt.NDArray = 0.5):
         """_summary_
 
         Parameters
@@ -382,8 +390,7 @@ class Hemisphere:
             fd2 = f.shape[1]
             assert fd2 == 1 or fd2 == self.white.n_vertices
         f = cortech.utils.atleast_nd_append(f, 3)
-        if direction is None:
-            direction = self.pial.vertices - self.white.vertices
+        direction = self.pial.vertices - self.white.vertices
         return np.squeeze(self.white.vertices + f * direction) 
 
     def _predict_linear_model(
@@ -483,7 +490,7 @@ class Hemisphere:
         """
         if method in {"equidistance", "equivolume"}:
             if thickness is None:
-                thickness = self.compute_thickness()
+                thickness = self.compute_freesurfer_thickness()
             match method:
                 case "equivolume":
                     match curv:
@@ -495,13 +502,13 @@ class Hemisphere:
                         case _:
                             curv = np.asarray(curv)
                     frac = self.compute_equivolume_fraction(thickness, curv, frac)
-                    direction = None
                 case "equidistance":
-                    # pass
+                    pass
                     # node_to_node_thickness = self.compute_node_to_node_difference()
                     # frac *= (thickness / (node_to_node_thickness + 1e-5))
-                    direction = self.white.compute_vertex_normals()
-            layers = self._layer_from_distance_fraction(frac, direction=direction)
+                     
+            layers = self._layer_from_distance_fraction(frac)
+
             if return_surface:
                 if layers.ndim == 2:
                     layers = self.white.new_from(layers)
@@ -576,7 +583,7 @@ class Hemisphere:
 
         # Get the principal curvature directions
         surf_tmp = getattr(self, surface_name)
-        _, E = surf_tmp.compute_principal_curvatures()
+        _, E = surf_tmp.principal_curvatures()
 
         # The unknowns (3x1), two gradients and the bias
         num_params = 2
