@@ -13,7 +13,9 @@ from ex vivo FreeSurfer runs.
 4. `compute_thickness_cov.py` computes and plots the coefficient of variation
    across hemispheres of the layer thicknesses, with and without curvature
    correction (optional).
-5. `border_aligned_profiles.py` compares border placement methods by
+5. `sweep_smoothing.py` runs 1. and 2. for several amounts of smoothing and
+   selects the best setting of each model.
+6. `border_aligned_profiles.py` compares border placement methods by
    sampling an intensity volume along WM-border-pial trajectories (optional).
 
 ## Requirements
@@ -93,25 +95,35 @@ the same surface smoothing and registration, so its uncorrected maps equal
 
 ### Parameter sweeps
 
-Each processing run goes in its own folder, and each fit goes in its own
-subfolder of that. For example:
+`sweep_smoothing.py` runs processing and fitting for several amounts of
+smoothing (by default surface smoothing 5 and curvature smoothing 0, 5, 10,
+15, 20, neighborhood size 1) and selects the setting with the lowest
+cross-validation error for each model (linear model, local and global
+equivolume, local and global equidistance):
 
 ```bash
-for surf in 0 5 10; do
-  for curv in 0 20; do
-    out=$ANALYSIS/surf${surf}_curv${curv}
-    python process_exvivo_data.py $SUBJECTS $out --surf-smooth $surf --curv-smooth $curv
-    for k in 1 2; do
-      python fit_layer_models.py $out --neighborhood-size $k
-    done
-  done
-done
-
-# Compare the cross-validation errors
-for f in $ANALYSIS/*/models_neighborhood_*/cv_summary.csv; do echo $f; cat $f; done
+python sweep_smoothing.py $SUBJECTS $ANALYSIS
+python sweep_smoothing.py $SUBJECTS $ANALYSIS --surf-smooth 0 5 10 --curv-smooth 0 20 --neighborhood-sizes 1 2
 ```
 
-Existing output folders are not overwritten unless `--overwrite` is given.
+Each processing run goes in `$ANALYSIS/surf<S>_curv<C>` and each fit in its
+`models_neighborhood_<k>` subfolder. Finished runs are skipped, so an
+interrupted sweep is resumed by rerunning the command (`--overwrite` redoes
+everything). Other options of the two scripts can be passed with
+`--process-args` and `--fit-args`, e.g., `--process-args "--n-fracs 31"`.
+Outputs:
+
+- `sweep_summary.csv`: cross-validation error of every model and setting.
+- `best_models.csv`: the selected setting of each model. A model must be
+  applied with the curvature smoothing it was fitted with (`curv_smooth`).
+  The errors of the selected models are slightly optimistic, as the same
+  cross-validation is used for the selection.
+- `best_models/<method>/`: the final models of the selected settings, in the
+  layout of `cortech/models/<method>/<spherical|josa>/`.
+
+Gradients are skipped in the sweep unless `--gradients` is given. Single runs
+of the other scripts do not overwrite existing output folders unless
+`--overwrite` is given.
 
 ## Reproducibility
 
