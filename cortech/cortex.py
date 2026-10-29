@@ -115,7 +115,7 @@ class Hemisphere:
         vp = self.pial.vertices
         np_ = self.pial.vertex_normals()
 
-        knn, _ = self.white.k_ring_neighbors(nbhd_size)
+        knn, _ = self.white.k_ring_neighbors(k=nbhd_size)
 
         knn_sizes = np.array([len(k) for k in knn], dtype=np.int64)
         knn_offsets = np.empty(len(knn) + 1, dtype=np.int64)
@@ -631,14 +631,14 @@ class Hemisphere:
 
         # Get the principal curvature directions
         surf_tmp = getattr(self, surface_name)
-        _, E = surf_tmp.compute_principal_curvatures()
+        _, E = surf_tmp.principal_curvatures()
 
         # The unknowns (3x1), two gradients and the bias
         num_params = 2
         coeffs = np.zeros((surf_tmp.n_vertices, num_params))
 
         # number of neighbors
-        knn, kr = surf_tmp.k_ring_neighbors(neighborhood_size)
+        knn, kr = surf_tmp.k_ring_neighbors(k=neighborhood_size)
         m = np.array([x.size for x in knn])
         muq = np.unique(m)
 

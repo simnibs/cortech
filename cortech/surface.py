@@ -1502,7 +1502,7 @@ class ManifoldSurface(NonManifoldSurface):
         if smooth_iter > 0:
             k1, k2, H, K = np.ascontiguousarray(
                 self.smooth_laplacian(
-                    np.stack((k1, k2, H, K), axis=1), n_iter=smooth_iter
+                    array=np.stack((k1, k2, H, K), axis=1), n_iter=smooth_iter
                 ).T
             )
 
