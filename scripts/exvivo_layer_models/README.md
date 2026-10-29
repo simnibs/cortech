@@ -13,6 +13,8 @@ from ex vivo FreeSurfer runs.
 4. `compute_thickness_cov.py` computes and plots the coefficient of variation
    across hemispheres of the layer thicknesses, with and without curvature
    correction (optional).
+5. `border_aligned_profiles.py` compares border placement methods by
+   sampling an intensity volume along WM-border-pial trajectories (optional).
 
 ## Requirements
 
@@ -179,6 +181,39 @@ and `fsaverage_avg_<sulc|curv>.png`. `plot_config.json` records the inputs.
 `lh.<mean|cov>_<cortical|infra|supra>_thickness[_corrected].mgh` and PNGs of
 the same name, `cov_histograms.png`, and `summary.csv` (mean over cortex
 vertices of every map and median CoV). `cov_config.json` records the inputs.
+
+### Border-aligned intensity profiles
+
+`border_aligned_profiles.py` samples an intensity volume (qT1, R1, T2*, ...,
+registered to the scanner space of the surfaces) of one subject along
+WM-border-pial trajectories for each border method, and measures how well
+each border keeps laminar intensity features aligned across gyri and sulci
+(see the script's docstring for the method). Borders are either read from
+`surf/?h.inf.<method>` or, with `--models-dir`, predicted with the fitted
+models (as in the cross-validation, including the surface smoothing):
+
+```bash
+python border_aligned_profiles.py --subject <sub> --volume <sub>/mri/qT1.nii.gz \
+    --models-dir $OUT/models_neighborhood_1 \
+    --methods inf equidistance equivolume linear_model --out $OUT/profiles/<sub>
+```
+
+`inf` is the true border (`surf/?h.inf`). Subjects that were used to fit the
+models are evaluated in-sample. Outputs in `--out`:
+
+- `metrics.csv`: long format (hemi, method, axis, region, metric, value) for
+  the normalised and distance axes and the whole cortex and each parcel of
+  `--annot`: `gyral_sulcal_shift` (positive = features deeper in gyri),
+  `gyral_sulcal_corr`, `gyral_sulcal_rms`, `within_sd`, `border_curv_slope`,
+  `profile_curv_slope`, `n_vertices`.
+- `border_diagnostics.csv`: median border fraction on the WM-pial line and
+  median/95th percentile distance from the line.
+- `?h.border_intensity.<method>.mgh`: intensity at the border (subject space).
+- `?h.profiles.png`: mean gyral and sulcal profiles on both axes and the
+  across-vertex SD for each method.
+- `?h.profiles.npz` (with `--save-profiles`): z-scored profiles of the
+  vertices in the mask, the axes, curvature, area, gyral/sulcal masks.
+- `profiles_config.json`: the parameters of the run.
 
 ### Updating the models in cortech
 

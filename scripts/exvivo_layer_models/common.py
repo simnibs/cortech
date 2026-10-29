@@ -1,4 +1,4 @@
-"""Helpers shared by process_exvivo_data.py and fit_layer_models.py."""
+"""Helpers shared by the scripts in this folder."""
 
 import datetime
 import json
@@ -25,6 +25,10 @@ TAUBIN_B = -0.61
 # Prefix of fsaverage overlays from right hemispheres mapped to the left
 # hemisphere (all model fitting happens on lh of fsaverage).
 RH_ON_LH = "rh-on-lh"
+
+# Parameters of the linear border model (in the order of its predictors
+# [1, k1, k2, k1*k2])
+LINEAR_MODEL_PARAMETERS = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
 
 
 # ---------------------------------------------------------------------------
@@ -175,17 +179,20 @@ def load_subject_hemisphere(
     sphere_reg: str,
     surf_smooth: int,
     fsaverage_reg: str,
+    inf: str | None = "inf",
 ) -> tuple[Hemisphere, Hemisphere]:
-    """Load white, pial and infra-supra (inf) surfaces of a subject, Taubin
-    smooth them, and set up resampling from subject to fsaverage
-    (`surf.registration.resample`).
+    """Load white, pial and infra-supra (`inf`, if not None) surfaces of a
+    subject, Taubin smooth them, and set up resampling from subject to
+    fsaverage (`surf.registration.resample`).
 
     Returns the subject and fsaverage hemispheres.
     """
     surf = Hemisphere.from_freesurfer_subject_dir(
-        subject_dir, hemi, inf="inf", registration=sphere_reg
+        subject_dir, hemi, inf=inf, registration=sphere_reg
     )
     for s in (surf.white, surf.pial, surf.inf):
+        if s is None:
+            continue
         s.smooth_taubin(a=TAUBIN_A, b=TAUBIN_B, n_iter=surf_smooth, inplace=True)
 
     fsavg = Hemisphere.from_freesurfer_subject_dir(
@@ -193,6 +200,44 @@ def load_subject_hemisphere(
     )
     surf.registration.set_projection(fsavg.registration.vertices)
     return surf, fsavg
+
+
+def predict_border(
+    surf: Hemisphere, fsavg: Hemisphere, params: npt.NDArray, model: str, curv_smooth: int
+) -> npt.NDArray:
+    """Place the infra-supra border on `surf` using a border model.
+
+    `params` is either a scalar (global fraction) or defined per vertex of
+    `fsavg` (the fsaverage hemisphere with the same `name` as `surf`), in
+    which case it is resampled to `surf` via the spherical registrations.
+    `model` is a cortech infra-supra model name, i.e., it contains
+    `equivolume`, `equidistance` or `linear`. Returns the border vertices.
+    """
+    fsavg.registration.set_projection(surf.registration.vertices)
+    params = np.asarray(params)
+    if params.size > 1:  # parameters per fsaverage vertex
+        params = fsavg.registration.resample(params).squeeze()
+    surf.infra_supra_model = {model: params}
+    return surf.fit_infra_supra_border(curv_args={"smooth_iter": curv_smooth})[model]
+
+
+def load_fitted_model(models_dir: Path, model: str, hemi: str) -> npt.NDArray:
+    """Load a final model written by fit_layer_models.py on fsaverage `hemi`.
+
+    `model` is `linear_model`, `<equivolume|equidistance>` (the local,
+    neighborhood model), or `<equivolume|equidistance>.global`.
+    """
+    method, _, variant = model.partition(".")
+    d = models_dir / method
+    if method == "linear_model" and not variant:
+        return np.stack(
+            [load_overlay(d / f"{hemi}.{p}.linear_model.mgh") for p in LINEAR_MODEL_PARAMETERS], 1
+        )
+    if method in SWEEP_METHODS and not variant:
+        return load_overlay(d / f"{hemi}.{method}.neighbor.frac.mgh")
+    if method in SWEEP_METHODS and variant == "global":
+        return np.loadtxt(d / "global_fraction.csv")
+    raise ValueError(f"Unknown model {model}")
 
 
 def freesurfer_thickness(

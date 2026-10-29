@@ -25,6 +25,7 @@ import numpy.typing as npt
 
 import cortech
 from common import (
+    LINEAR_MODEL_PARAMETERS,
     SWEEP_METHODS,
     freesurfer_thickness,
     fsaverage_dir,
@@ -34,16 +35,15 @@ from common import (
     load_overlay,
     load_subject_hemisphere,
     map_hemi_array,
+    predict_border,
     prepare_dir,
     read_aparc,
     read_config,
     save_overlay,
     write_config,
-    write_csv,
 )
 
 ALL_MODELS = ("linear_model",) + SWEEP_METHODS
-LINEAR_MODEL_PARAMETERS = ["intercept", "beta_k1", "beta_k2", "beta_k1k2"]
 PREDICTOR_CLIP_RANGE = (0.1, 99.9)
 
 
@@ -65,18 +65,10 @@ class Evaluator:
             self.config["surf_smooth"],
             fsaverage_reg="sphere.reg",
         )
-        fsavg.registration.set_projection(surf.registration.vertices)
-
         params = np.asarray(params)
-        if params.size > 1:  # parameters per fsaverage vertex
-            if hemi == "rh":
-                params = map_hemi_array(params, "rh")
-            params = fsavg.registration.resample(params).squeeze()
-
-        surf.infra_supra_model = {method: params}
-        predicted = surf.fit_infra_supra_border(
-            curv_args={"smooth_iter": self.config["curv_smooth"]}
-        )[method]
+        if params.size > 1 and hemi == "rh":  # parameters on lh of fsaverage
+            params = map_hemi_array(params, "rh")
+        predicted = predict_border(surf, fsavg, params, method, self.config["curv_smooth"])
 
         w = surf.white.vertices
         error = freesurfer_thickness(surf, w, surf.inf.vertices) - freesurfer_thickness(
