@@ -18,6 +18,7 @@ README.md for details.
 """
 
 import argparse
+import csv
 from pathlib import Path
 
 import numpy as np
@@ -55,6 +56,7 @@ class Evaluator:
         self.config = config
         self.out_dir = out_dir
         self.abs_errors = {}
+        self.sample_errors = []
 
     def __call__(self, sample, params: npt.NDArray, method: str):
         sub, hemi = sample
@@ -91,7 +93,10 @@ class Evaluator:
             error, error_fsav = self(sample, fit(train), method)
             sub, hemi = sample
             save_overlay(error, self.out_dir / f"{hemi}.error.{sub}.{name}.mgh")
-            save_overlay(error_fsav, self.out_dir / f"lh.error.{sub}.{name}.fsaverage.mgh")
+            save_overlay(error_fsav, self.out_dir / lh_fsaverage_name(hemi, f"error.{sub}.{name}"))
+            self.sample_errors.append(
+                dict(subject=sub, hemi=hemi, model=name, mean_abs_error=np.abs(error_fsav).mean())
+            )
             errors.append(error_fsav)
         abs_error = np.mean(np.abs(errors), axis=0)
         save_overlay(abs_error, self.out_dir / f"lh.abs.average.error.{name}.mgh")
@@ -201,9 +206,9 @@ def run_linear_model(processed_dir, out_dir, samples, knn, n_vertices, config, a
     def fit(train):
         betas = fit_linear_model(predictors[train], target_fraction[train], knn, n_vertices)
         s = next(i for i in range(len(samples)) if i not in train)
-        sub = samples[s][0]
+        sub, hemi = samples[s]
         for name, b in zip(LINEAR_MODEL_PARAMETERS, betas.T):
-            save_overlay(b, out_dir / f"lh.{name}.loo.{sub}.mgh")
+            save_overlay(b, out_dir / f"lh.{name}.loo.{sub}.{hemi}.mgh")
         # Error when predicting directly on fsaverage (no surface placement)
         frac = np.clip(np.einsum("ij,ij->i", predictors[s], betas), 0, 1)
         fsav_only_errors.append(target_thickness[s] - frac * total_thickness[s])
@@ -218,7 +223,7 @@ def run_linear_model(processed_dir, out_dir, samples, knn, n_vertices, config, a
     betas = fit_linear_model(predictors, target_fraction, knn, n_vertices)
     for name, b in zip(LINEAR_MODEL_PARAMETERS, betas.T):
         save_lh_and_rh(b, out_dir, f"{name}.linear_model")
-    return evaluator.abs_errors
+    return evaluator
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +328,7 @@ def run_fraction_model(processed_dir, out_dir, samples, knn, method, config):
         fracs[best_fraction_neighborhood(errors, knn)], out_dir, f"{method}.neighbor.frac"
     )
     np.savetxt(out_dir / "global_fraction.csv", np.atleast_1d(fracs[best_fraction_global(errors)]))
-    return evaluator.abs_errors
+    return evaluator
 
 
 # ---------------------------------------------------------------------------
@@ -355,16 +360,23 @@ def main(args):
     fsav_white = cortech.ManifoldSurface.from_freesurfer_subject_dir(fsaverage_dir(), "lh.white")
     knn = neighborhoods(fsav_white, args.neighborhood_size)
 
-    summary = {}
+    summary, sample_errors = {}, []
     for model in args.models:
         model_dir = out_dir / model
         model_dir.mkdir()
         if model == "linear_model":
-            summary |= run_linear_model(
+            evaluator = run_linear_model(
                 processed_dir, model_dir, samples, knn, fsav_white.n_vertices, config, args
             )
         else:
-            summary |= run_fraction_model(processed_dir, model_dir, samples, knn, model, config)
+            evaluator = run_fraction_model(processed_dir, model_dir, samples, knn, model, config)
+        summary |= evaluator.abs_errors
+        sample_errors += evaluator.sample_errors
+
+    with open(out_dir / "cv_errors.csv", "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(sample_errors[0]))
+        writer.writeheader()
+        writer.writerows(sample_errors)
 
     with open(out_dir / "cv_summary.csv", "w") as f:
         f.write("model,mean_abs_error\n")

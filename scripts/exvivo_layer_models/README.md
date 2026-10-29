@@ -116,8 +116,12 @@ Outputs:
 - `sweep_summary.csv`: cross-validation error of every model and setting.
 - `best_models.csv`: the selected setting of each model. A model must be
   applied with the curvature smoothing it was fitted with (`curv_smooth`).
-  The errors of the selected models are slightly optimistic, as the same
-  cross-validation is used for the selection.
+  The cross-validation error of the selected setting is slightly
+  optimistic, as the same errors are used for the selection, so
+  `selection_corrected_error` gives an approximately corrected error (the
+  setting is selected for each left out hemisphere without its own error;
+  see the script's docstring). `selection_agreement` is how often that
+  per-hemisphere selection agrees with the overall one.
 - `best_models/<method>/`: the final models of the selected settings, in the
   layout of `cortech/models/<method>/<spherical|josa>/`.
 
@@ -164,18 +168,20 @@ hemisphere (`lh.`, `rh.`) and for all subjects on lh (`all.on.lh.`).
 ### Fitting (`<out>/models_neighborhood_<k>/`)
 
 - `cv_summary.csv`: mean absolute cross-validation error (mm) of the infra
-  thickness for every model.
+  thickness for every model. `cv_errors.csv` gives the error of each left
+  out hemisphere (mean over fsaverage vertices); its mean over hemispheres is
+  the error in `cv_summary.csv`.
 - `linear_model/`: final model `?h.<intercept|beta_k1|beta_k2|beta_k1k2>.linear_model.mgh`.
 - `equivolume/`, `equidistance/`: final local model `?h.<method>.neighbor.frac.mgh`
   and global model `global_fraction.csv`. `global_fraction_loo.csv` gives the
   global fraction in each cross-validation fold.
 - Cross-validation, per left-out subject: `?h.error.<subject>.<model>.mgh`
-  (subject space) and `lh.error.<subject>.<model>.fsaverage.mgh`, and
+  (subject space) and `<lh|rh-on-lh>.error.<subject>.<model>.fsaverage.mgh`, and
   `lh.abs.average.error.<model>.mgh` (mean absolute error over subjects).
   `<model>` is `linear_model` or `<method>.<neighbors|per.vertex|regions|global>`.
   `lh.abs.average.error.linear_model.fsaverage_prediction.mgh` is the error
   when the linear model is evaluated directly on fsaverage. Leave-one-out
-  coefficients are saved as `lh.<parameter>.loo.<subject>.mgh`.
+  coefficients are saved as `lh.<parameter>.loo.<subject>.<hemi>.mgh`.
 
 ### Plots (`<out>/plots/`)
 

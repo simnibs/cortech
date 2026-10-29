@@ -22,8 +22,17 @@ The selection is written to <out>/best_models.csv and the final models of
 the selected runs are copied to <out>/best_models/<method>/ (the layout of
 cortech/models/<method>/<registration>/). Note that a model must be applied
 with the curvature smoothing it was fitted with (`curv_smooth` in
-best_models.csv), and that the reported errors of the selected models are
-slightly optimistic as the same cross-validation is used for selection.
+best_models.csv).
+
+The cross-validation error of the selected setting is slightly optimistic,
+as the same errors are used to select it. best_models.csv therefore also
+gives a selection-corrected error: for each left out hemisphere, the setting
+is selected using the cross-validation errors of the other hemispheres only,
+and the error of that setting on the left out hemisphere is averaged over
+hemispheres. This is an approximation of nested cross-validation (the errors
+of the other hemispheres come from models fitted with the left out
+hemisphere). `selection_agreement` is the fraction of left out hemispheres
+for which this selects the same setting as the overall selection.
 """
 
 import argparse
@@ -32,6 +41,8 @@ import itertools
 import shlex
 import shutil
 from pathlib import Path
+
+import numpy as np
 
 import fit_layer_models
 import process_exvivo_data
@@ -74,7 +85,8 @@ def run_processing(args, surf: int, curv: int):
 
 def run_fit(args, surf: int, curv: int, k: int):
     d = run_dir(args.out, surf, curv) / f"models_neighborhood_{k}"
-    if (d / "cv_summary.csv").exists() and not args.overwrite:
+    done = (d / "cv_summary.csv").exists() and (d / "cv_errors.csv").exists()
+    if done and not args.overwrite:
         print(f"Skipping fit of {d.parent.name}/{d.name} (done)")
         return
     print(f"=== Fitting {d.parent.name}/{d.name} ===")
@@ -82,10 +94,16 @@ def run_fit(args, surf: int, curv: int, k: int):
     fit_layer_models.main(fit_layer_models.parse_args(argv + shlex.split(args.fit_args)))
 
 
-def collect_results(args) -> list[dict]:
-    rows = []
+def collect_results(args) -> tuple[list[dict], dict]:
+    """Return the cross-validation error of every run and model, and the
+    errors per left out hemisphere, {(run, model): {(subject, hemi): error}}."""
+    rows, sample_errors = [], {}
     for surf, curv, k in itertools.product(args.surf_smooth, args.curv_smooth, args.neighborhood_sizes):
         d = run_dir(args.out, surf, curv) / f"models_neighborhood_{k}"
+        with open(d / "cv_errors.csv") as f:
+            for r in csv.DictReader(f):
+                key = ((surf, curv, k), r["model"])
+                sample_errors.setdefault(key, {})[(r["subject"], r["hemi"])] = float(r["mean_abs_error"])
         with open(d / "cv_summary.csv") as f:
             for r in csv.DictReader(f):
                 rows.append(
@@ -98,17 +116,50 @@ def collect_results(args) -> list[dict]:
                         models_dir=str(d),
                     )
                 )
-    return rows
+    return rows, sample_errors
 
 
-def select_best(rows: list[dict]) -> list[dict]:
+def run_key(row: dict) -> tuple[int, int, int]:
+    return row["surf_smooth"], row["curv_smooth"], row["neighborhood_size"]
+
+
+def selection_corrected_error(runs: list[tuple], errors: dict[tuple, dict]):
+    """Select the run for each left out hemisphere using the errors of the
+    other hemispheres. Returns the mean error of the selected runs on the
+    left out hemispheres and the selected run of each."""
+    samples = sorted(errors[runs[0]])
+    if any(sorted(errors[r]) != samples for r in runs):
+        raise ValueError("The runs of the sweep do not have the same subjects")
+    selected, held_out_errors = [], []
+    for s in samples:
+        others = [t for t in samples if t != s]
+        run = min(runs, key=lambda r: np.mean([errors[r][t] for t in others]))
+        selected.append(run)
+        held_out_errors.append(errors[run][s])
+    return float(np.mean(held_out_errors)), selected
+
+
+def select_best(rows: list[dict], sample_errors: dict) -> list[dict]:
     best = []
     for model, (name, *_) in SELECTED_MODELS.items():
         candidates = [r for r in rows if r["model"] == model]
         if not candidates:
             print(f"No results for {model}, skipping")
             continue
-        best.append(dict(min(candidates, key=lambda r: r["mean_abs_error"]), model=name, cv_model=model))
+        b = min(candidates, key=lambda r: r["mean_abs_error"])
+        runs = [run_key(r) for r in candidates]
+        corrected, selected = selection_corrected_error(
+            runs, {run: sample_errors[(run, model)] for run in runs}
+        )
+        best.append(
+            dict(
+                b,
+                model=name,
+                cv_model=model,
+                selection_corrected_error=corrected,
+                selection_agreement=np.mean([run == run_key(b) for run in selected]),
+            )
+        )
     return best
 
 
@@ -141,9 +192,9 @@ def main(args):
         for k in args.neighborhood_sizes:
             run_fit(args, surf, curv, k)
 
-    rows = collect_results(args)
+    rows, sample_errors = collect_results(args)
     write_rows(args.out / "sweep_summary.csv", rows)
-    best = select_best(rows)
+    best = select_best(rows, sample_errors)
     write_rows(args.out / "best_models.csv", best)
 
     best_dir = args.out / "best_models"
@@ -152,11 +203,12 @@ def main(args):
     copy_best_models(best, best_dir)
 
     print("\nBest settings (mean absolute cross-validation error, mm):")
-    print(f"  {'model':20s} {'surf':>5s} {'curv':>5s} {'nbhd':>5s} {'error':>8s}")
+    print(f"  {'model':20s} {'surf':>5s} {'curv':>5s} {'nbhd':>5s} {'error':>8s} {'corrected':>10s} {'agreement':>10s}")
     for b in best:
         print(
             f"  {b['model']:20s} {b['surf_smooth']:5d} {b['curv_smooth']:5d} "
-            f"{b['neighborhood_size']:5d} {b['mean_abs_error']:8.4f}"
+            f"{b['neighborhood_size']:5d} {b['mean_abs_error']:8.4f} "
+            f"{b['selection_corrected_error']:10.4f} {b['selection_agreement']:10.2f}"
         )
     print(f"Final models of the best settings copied to {best_dir}")
 
