@@ -3,7 +3,7 @@ import numpy as np
 import numpy.typing as npt
 cimport numpy as np
 
-cdef extern from "helpers.h":
+cdef extern from "cgal_helpers.h":
     cdef cppclass V2FIIII:
         vector[vector[float]] vertices
         vector[vector[int]] faces

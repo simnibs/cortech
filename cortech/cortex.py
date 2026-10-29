@@ -7,7 +7,7 @@ import numpy.typing as npt
 import scipy.spatial
 
 import cortech.utils
-from cortech.surface import Surface, Sphere
+from cortech.surface import ManifoldSurface, Sphere
 from cortech.constants import Curvature
 from cortech.models.model_utils import load_model
 
@@ -22,11 +22,11 @@ class Hemisphere:
     def __init__(
         self,
         name: str,
-        white: Surface,
-        pial: Surface,
+        white: ManifoldSurface,
+        pial: ManifoldSurface,
         sphere: Sphere | None = None,
         registration: Sphere | None = None,
-        inf: Surface | None = None,
+        inf: ManifoldSurface | None = None,
         infra_supra_model=None,
     ) -> None:
         assert name in {"lh", "rh"}
@@ -38,13 +38,16 @@ class Hemisphere:
         self.inf = inf
         self.infra_supra_model = infra_supra_model
 
-        self._surfaces = [self.white, self.pial]
+        msg = "Only surfaces with vertex correspondence are currently supported"
+        assert self.white.n_vertices == self.pial.n_vertices, msg
+
+        self._surfaces = dict(white=self.white, pial=self.pial)
         if self.sphere is not None:
-            self._surfaces.append(self.sphere)
+            self._surfaces["sphere"] = self.sphere
         if self.registration is not None:
-            self._surfaces.append(self.registration)
+            self._surfaces["registration"] = self.registration
         if self.inf is not None:
-            self._surfaces.append(self.inf)
+            self._surfaces["inf"] = self.inf
 
     def has_registration(self):
         return self.registration is not None
@@ -53,7 +56,7 @@ class Hemisphere:
         return self.infra_supra_model is not None
 
     def compute_thickness(self, method="vertex-to-closest") -> npt.NDArray[float]:
-        """Calculate thickness at each vertex of node-matched surfaces.
+        """Calculate thickness at each vertex of vertex-matched surfaces.
 
         Parameters
         ----------
@@ -114,7 +117,7 @@ class Hemisphere:
         vp = self.pial.vertices
         np_ = self.pial.vertex_normals()
 
-        knn, _ = self.white.k_ring_neighbors(nbhd_size)
+        knn, _ = self.white.k_ring_neighbors(k=nbhd_size)
 
         knn_sizes = np.array([len(k) for k in knn], dtype=np.int64)
         knn_offsets = np.empty(len(knn) + 1, dtype=np.int64)
@@ -304,7 +307,7 @@ class Hemisphere:
                     self.infra_supra_model[model], curv, extra_predictors=extra_parameters
                 )
                 if return_surface:
-                    surfaces[model] = self.white.new_from(surf_tmp)
+                    surfaces[model] = self.white.new(surf_tmp)
                 else:
                     surfaces[model] = surf_tmp
             else:
@@ -511,12 +514,111 @@ class Hemisphere:
 
             if return_surface:
                 if layers.ndim == 2:
-                    layers = self.white.new_from(layers)
+                    layers = self.white.new(layers)
                 else:
-                    layers = tuple(self.white.new_from(v) for v in layers)
+                    layers = tuple(self.white.new(v) for v in layers)
             return layers
         elif method == "laplace":
             raise NotImplementedError
+
+    def _layer_from_distance_fraction(self, f: float | npt.NDArray = 0.5):
+        """_summary_
+
+        Parameters
+        ----------
+        vi : npt.NDArray
+        vo : npt.NDArray
+        frac : float | npt.NDArray
+            Fraction measured from inner surface, e.g., 0.25 would be one quarter
+            of the way from the inner to the outer surface. Defaults to 0.5.
+            frac = float | (1, ) | (n_frac,) | (n_vertices, ) | (n_frac, n_vertices)
+
+        Returns
+        -------
+        _type_: _description_
+        """
+        f = np.atleast_1d(f)
+        if f.ndim == 1:
+            if f.shape[0] == self.white.n_vertices:
+                f = f[None]
+        elif f.ndim == 2:
+            fd2 = f.shape[1]
+            assert fd2 == 1 or fd2 == self.white.n_vertices
+        f = cortech.utils.atleast_nd_append(f, 3)
+        return np.squeeze((1 - f) * self.white.vertices + f * self.pial.vertices)
+
+    def remesh(
+        self,
+        reference: str = "white",
+        method: str = "isotropic",
+        method_kwargs: dict | None = None,
+        inplace: bool = False,
+    ):
+        """Remesh corresponding surfaces using one of three strategies. The
+        simplification is performed on the `reference` surface and applied to
+        the remaining surfaces. To obtain the corresponding remeshing points of
+        the remaining surfaces, the points resulting from the simplification of
+        `reference` are projected onto the original surface in order to
+        retrieve the containing triangle and barycentric vertex weights.
+        Because of the vertex correspondence between the surfaces, these can be
+        used to resample the other surfaces.
+
+        Parameters
+        ----------
+        reference : _type_
+            Surface to which remeshed is applied (default = "white").
+        method : str, optional
+            If method in {"adaptive", "isotropic", "simplify"}, call the
+            correponding method of cortech.Surface.
+        method_kwargs : _type_, optional
+            _description_, by default None
+
+        Returns
+        -------
+        _type_
+            The simplified reference surface or a tuple of the simplified reference
+            and extra surfces.
+        """
+        ref_surf = self._surfaces[reference]
+        surfaces = self._surfaces
+        method_kwargs = {} if method_kwargs is None else method_kwargs
+
+        # otherwise this does not make sense
+        assert all(ref_surf.n_vertices == s.n_vertices for s in surfaces)
+        assert all(ref_surf.n_faces == s.n_faces for s in surfaces)
+        assert isinstance(method_kwargs, dict)
+
+        match method:
+            case "adaptive":
+                ref_remesh = ref_surf.adaptive_remeshing(**method_kwargs)
+            case "isotropic":
+                ref_remesh = ref_surf.isotropic_remeshing(**method_kwargs)
+            case "simplify":
+                ref_remesh = ref_surf.simplify(**method_kwargs)
+            # case "subsample":
+            #     s_ref = ref_surf.subsample(**method_kwargs)
+            case _:
+                raise ValueError(f"Invalid remeshing method '{method}'")
+
+        tris, weights, _, dists = ref_surf.project_points(ref_remesh.vertices)
+        # assert dists.max() < projection_tol
+        # print(dists.max())
+
+        # Apply to remaining surfaces
+        s_remesh = {}
+        for k, v in surfaces.items():
+            if k == "reference":
+                s_remesh[k] = ref_remesh
+            else:
+                vs = np.sum(v.mesh()[tris] * weights[..., None], -2)
+                s_remesh[k] = v.new(vs, ref_remesh.faces)
+
+        if inplace:
+            for k, v in s_remesh.items():
+                setattr(self, k, v)
+            return self
+        else:
+            return Hemisphere(self.name, **s_remesh)
 
     def save(
         self,
@@ -590,7 +692,7 @@ class Hemisphere:
         coeffs = np.zeros((surf_tmp.n_vertices, num_params))
 
         # number of neighbors
-        knn, kr = surf_tmp.k_ring_neighbors(neighborhood_size)
+        knn, kr = surf_tmp.k_ring_neighbors(k=neighborhood_size)
         m = np.array([x.size for x in knn])
         muq = np.unique(m)
 
@@ -657,21 +759,21 @@ class Hemisphere:
     ):
         assert hemi in {"lh", "rh"}
 
-        white_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{white}")
+        white_surf = ManifoldSurface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{white}")
 
         # The pial surfaces (?h.pial) are symlinks to either ?h.pial.T1 or
         # ?h.pial.T2 depending on whether the `-T2pial` flag was used when
         # invoking recon-all. Symlinks created in WSL on Windows do not
         # seem to work currently, hence this workaround
         try:
-            pial_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{pial}")
+            pial_surf = ManifoldSurface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{pial}")
         except OSError:  # invalid argument
             try:
-                pial_surf = Surface.from_freesurfer_subject_dir(
+                pial_surf = ManifoldSurface.from_freesurfer_subject_dir(
                     sub_dir, f"{hemi}.{pial}.T2"
                 )
             except FileNotFoundError:  # -T2pial was not used
-                pial_surf = Surface.from_freesurfer_subject_dir(
+                pial_surf = ManifoldSurface.from_freesurfer_subject_dir(
                     sub_dir, f"{hemi}.{pial}.T1"
                 )
 
@@ -694,7 +796,7 @@ class Hemisphere:
         if inf is None:
             inf_surf = None
         else:
-            inf_surf = Surface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
+            inf_surf = ManifoldSurface.from_freesurfer_subject_dir(sub_dir, f"{hemi}.{inf}")
 
         infra_supra_model = {}
         if infra_supra_model_tuple is not None:
@@ -775,6 +877,10 @@ class Cortex:
 
     @iterate_over_hemispheres
     def has_spherical_registration(self):
+        pass
+
+    @iterate_over_hemispheres
+    def remesh(self):
         pass
 
     @classmethod

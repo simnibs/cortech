@@ -1,10 +1,13 @@
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+#include <tuple>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Polygon_mesh_processing/polygon_soup_to_polygon_mesh.h>
 #include <CGAL/Surface_mesh.h>
+
+#include <CGAL/boost/graph/Euler_operations.h>
 
 #include <cgal_helpers.h>
 
@@ -17,126 +20,204 @@ using Vertex_index = Surface_mesh::Vertex_index;
 
 using std::vector;
 
-namespace cortech
+namespace cortech {
+
+
+// Build Surface_mesh manually and force adding faces which will create a
+// non-manifold topology!
+Surface_mesh force_from_polygon_soup(
+    const vector<vector<float>> &vertices,
+    const vector<vector<int>> &faces)
 {
-    // Build Surface_mesh manually and return the index to Vertex_index mapping
-    std::pair<Surface_mesh, vector<Vertex_index>> from_polygon_soup_with_vertex_map(
-        const vector<vector<float>> &vertices,
-        const vector<vector<int>> &faces)
-    {
-        Surface_mesh mesh;
-        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
-        if (!is_valid_mesh)
-            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
-        int n_vertices = vertices.size();
-        int n_faces = faces.size();
+    Surface_mesh mesh;
+    int n_vertices = vertices.size();
+    int n_faces = faces.size();
 
-        vector<Vertex_index> v2v(n_vertices); // index to Vertex_index
-        for (int i = 0; i < n_vertices; ++i)
-        {
-            auto &v = vertices[i];
-            v2v[i] = mesh.add_vertex(Point_3(v[0], v[1], v[2]));
-        }
-        vector<int> f(3);
-        for (int i = 0; i < n_faces; ++i)
-        {
-            auto &f = faces[i];
-            mesh.add_face(v2v[f[0]], v2v[f[1]], v2v[f[2]]);
-        }
-        return std::make_pair(mesh, v2v);
+    vector<Vertex_index> v2v(n_vertices); // index to Vertex_index
+    for (int i = 0; i < n_vertices; ++i)
+    {
+        auto &v = vertices[i];
+        v2v[i] = mesh.add_vertex(Point_3(v[0], v[1], v[2]));
     }
-
-    Surface_mesh from_polygon_soup(
-        const vector<vector<float>> &vertices,
-        const vector<vector<int>> &faces)
+    vector<int> f(3);
+    vector<std::array<Vertex_index,3>> faces_as_vertex_handles;
+    faces_as_vertex_handles.reserve(n_faces);
+    for (int i = 0; i < n_faces; ++i)
     {
-        Surface_mesh mesh;
-        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
-        if (!is_valid_mesh)
-            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
-        auto points = vertices_to_point3(vertices);
-        CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points, faces, mesh);
-        return mesh;
+        auto &f = faces[i];
+        faces_as_vertex_handles.push_back({v2v[f[0]], v2v[f[1]], v2v[f[2]]});
     }
+    /*
+    mesh.add_face calls CGAL::Euler::add_face internally. If adding a face
+    breaks manifoldness (e.g., creates a pinched vertex), it will simply not
+    add the face (returns null_face pointer).
+    CGAL::Euler::add_faces on the other hand, will add all faces regardless.
+    It doesn't seem to be an official function though.
+    */
+    CGAL::Euler::add_faces(faces_as_vertex_handles, mesh);
+    if (mesh.number_of_faces() < n_faces)
+        throw std::runtime_error("Some faces were not added to the mesh. Please check CGAL::Euler::add_faces.");
 
-    Surface_mesh from_polygon_soup(
-        const vector<Point_3> &points,
-        const vector<vector<int>> &faces)
-    {
-        Surface_mesh mesh;
-        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
-        if (!is_valid_mesh)
-            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
-        CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points, faces, mesh);
-        return mesh;
-    }
-
-    vector<Point_3> vertices_to_point3(const vector<vector<float>> &vertices)
-    {
-        vector<Point_3> points(vertices.size());
-        int i = 0;
-        for (auto v : vertices)
-            points[i++] = Point_3(v[0], v[1], v[2]);
-        return points;
-    }
-
-    vector<vector<float>> point3_to_vertices(const vector<Point_3> &points)
-    {
-        vector<vector<float>> vertices(points.size(), vector<float>(3));
-        int i = 0;
-        for (Point_3 p : points)
-        {
-            auto &v = vertices[i++];
-            v[0] = (float)p.x();
-            v[1] = (float)p.y();
-            v[2] = (float)p.z();
-        }
-        return vertices;
-    }
-
-    vector<vector<float>> extract_vertices(const Surface_mesh &mesh)
-    {
-        // Extract vertices from a Surface_mesh into a vector of vectors.
-        int n_vertices = mesh.number_of_vertices();
-        vector<vector<float>> vertices(n_vertices, vector<float>(3));
-
-        for (Vertex_index vi : mesh.vertices())
-        {
-            Point_3 p = mesh.point(vi);
-            auto &v = vertices[vi];
-            v[0] = (float)p.x();
-            v[1] = (float)p.y();
-            v[2] = (float)p.z();
-        }
-        return vertices;
-    };
-
-    vector<vector<int>> extract_faces(const Surface_mesh &mesh)
-    {
-        // Extract faces from a Surface_mesh into a vector of vectors.
-        int n_faces = mesh.number_of_faces();
-        vector<vector<int>> faces(n_faces, vector<int>(3));
-
-        // for each face index, iterate over its halfedges and return all `target` vertices
-        int i = 0;
-        int j;
-        for (Face_index fi : mesh.faces())
-        {
-            Halfedge_index h = mesh.halfedge(fi);
-            auto &f = faces[i++];
-            j = 0;
-            for (Halfedge_index hi : mesh.halfedges_around_face(h))
-                f[j++] = (int)mesh.target(hi); // Vertex_index to int
-        }
-        return faces;
-    }
-
-    std::pair<vector<vector<float>>, vector<vector<int>>> extract_vertices_and_faces(
-        const Surface_mesh &mesh)
-    {
-        return std::make_pair(extract_vertices(mesh), extract_faces(mesh));
-    }
+    return mesh;
 }
+
+// Build Surface_mesh manually and return the index to Vertex_index mapping
+std::pair<Surface_mesh, vector<Vertex_index>> from_polygon_soup_with_vertex_map(
+    const vector<vector<float>> &vertices,
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
+{
+    Surface_mesh mesh;
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
+    int n_vertices = vertices.size();
+    int n_faces = faces.size();
+
+    vector<Vertex_index> v2v(n_vertices); // index to Vertex_index
+    for (int i = 0; i < n_vertices; ++i)
+    {
+        auto &v = vertices[i];
+        v2v[i] = mesh.add_vertex(Point_3(v[0], v[1], v[2]));
+    }
+    vector<int> f(3);
+    for (int i = 0; i < n_faces; ++i)
+    {
+        auto &f = faces[i];
+        mesh.add_face(v2v[f[0]], v2v[f[1]], v2v[f[2]]);
+    }
+    return std::make_pair(mesh, v2v);
+}
+
+std::tuple<Surface_mesh, vector<Vertex_index>, vector<Face_index>> from_polygon_soup_with_vertex_and_face_map(
+    const vector<vector<float>> &vertices,
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
+{
+    Surface_mesh mesh;
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
+    vector<Vertex_index> v2v; // index to Vertex_index
+    v2v.reserve(vertices.size());
+    for (auto v : vertices)
+        v2v.push_back(mesh.add_vertex(Point_3(v[0], v[1], v[2])));
+
+    vector<Face_index> f2f;
+    f2f.reserve(faces.size());
+    for (auto f : faces)
+    {
+        // f2f.push_back(mesh.add_face(v2v[f[0]], v2v[f[1]], v2v[f[2]]));
+        auto fi = mesh.add_face(v2v[f[0]], v2v[f[1]], v2v[f[2]]);
+        if (fi == Surface_mesh::null_face())
+            throw std::runtime_error("Failed to add face");
+        f2f.push_back(fi);
+    }
+
+    return std::make_tuple(mesh, v2v, f2f);
+}
+
+Surface_mesh from_polygon_soup(
+    const vector<vector<float>> &vertices,
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
+{
+    Surface_mesh mesh;
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
+    auto points = vertices_to_point3(vertices);
+    CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points, faces, mesh);
+    return mesh;
+}
+
+Surface_mesh from_polygon_soup(
+    const vector<Point_3> &points,
+    const vector<vector<int>> &faces,
+    bool check_polygon_soup)
+{
+    Surface_mesh mesh;
+    if (check_polygon_soup){
+        bool is_valid_mesh = CGAL::Polygon_mesh_processing::is_polygon_soup_a_polygon_mesh(faces);
+        if (!is_valid_mesh)
+            throw std::runtime_error("Triangulation does not define a valid polygon mesh.");
+    }
+    CGAL::Polygon_mesh_processing::polygon_soup_to_polygon_mesh(points, faces, mesh);
+    return mesh;
+}
+
+vector<Point_3> vertices_to_point3(const vector<vector<float>> &vertices)
+{
+    vector<Point_3> points(vertices.size());
+    int i = 0;
+    for (auto v : vertices)
+        points[i++] = Point_3(v[0], v[1], v[2]);
+    return points;
+}
+
+vector<vector<float>> point3_to_vertices(const vector<Point_3> &points)
+{
+    vector<vector<float>> vertices(points.size(), vector<float>(3));
+    int i = 0;
+    for (Point_3 p : points)
+    {
+        auto &v = vertices[i++];
+        v[0] = (float)p.x();
+        v[1] = (float)p.y();
+        v[2] = (float)p.z();
+    }
+    return vertices;
+}
+
+vector<vector<float>> extract_vertices(const Surface_mesh &mesh)
+{
+    // Extract vertices from a Surface_mesh into a vector of vectors.
+    int n_vertices = mesh.number_of_vertices();
+    vector<vector<float>> vertices(n_vertices, vector<float>(3));
+
+    for (Vertex_index vi : mesh.vertices())
+    {
+        Point_3 p = mesh.point(vi);
+        auto &v = vertices[vi];
+        v[0] = (float)p.x();
+        v[1] = (float)p.y();
+        v[2] = (float)p.z();
+    }
+    return vertices;
+};
+
+vector<vector<int>> extract_faces(const Surface_mesh &mesh)
+{
+    // Extract faces from a Surface_mesh into a vector of vectors.
+    int n_faces = mesh.number_of_faces();
+    vector<vector<int>> faces(n_faces, vector<int>(3));
+
+    // for each face index, iterate over its halfedges and return all `target` vertices
+    int i = 0;
+    int j;
+    for (Face_index fi : mesh.faces())
+    {
+        Halfedge_index h = mesh.halfedge(fi);
+        auto &f = faces[i++];
+        j = 0;
+        for (Halfedge_index hi : mesh.halfedges_around_face(h))
+            f[j++] = (int)mesh.target(hi); // Vertex_index to int
+    }
+    return faces;
+}
+
+SurfaceMesh extract_vertices_and_faces(const Surface_mesh &mesh)
+{
+    return {extract_vertices(mesh), extract_faces(mesh)};
+}
+
+} // end cortech
 
 // namespace CGAL_tr
 // {

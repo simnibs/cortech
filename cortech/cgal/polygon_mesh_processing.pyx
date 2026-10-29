@@ -8,18 +8,38 @@ cimport numpy as np
 ctypedef vector[vector[float]] PointVector
 ctypedef vector[vector[int]] IndexVector
 
-cdef extern from "polygon_mesh_processing_src.cpp" nogil:
-    cdef cppclass MeshOutput:
+cdef extern from "polygon_mesh_processing_src.cpp" namespace "cortech":
+    cdef cppclass SurfaceMesh:
+        vector[vector[float]] vertices
+        vector[vector[int]] faces
+
+    cdef cppclass SurfaceMeshWithFaceid:
         PointVector vertices
         IndexVector faces
+        vector[int] face_id
 
-    cdef cppclass MeshWithPMaps:
+    cdef cppclass SurfaceMeshWithPMaps:
         PointVector vertices
         IndexVector faces
         vector[int] vertices_pmap
         vector[int] faces_pmap
 
-    MeshOutput pmp_clip(
+    cdef cppclass SurfaceMeshWithFaceidAndPMaps:
+        PointVector vertices
+        IndexVector faces
+        vector[int] face_id
+        vector[int] vertices_pmap
+        vector[int] faces_pmap
+
+cdef extern from "polygon_mesh_processing_src.cpp" nogil:
+    SurfaceMesh pmp_autorefine_triangle_soup(
+        PointVector vertices,
+        IndexVector faces,
+        cppbool apply_iterative_snap_rounding,
+        unsigned int n_iter
+    ) except +
+
+    SurfaceMesh pmp_clip(
         PointVector vertices,
         IndexVector faces,
         vector[float] plane_origin,
@@ -29,24 +49,48 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
     pair[vector[int], vector[int]] pmp_connected_components(
         PointVector vertices,
         IndexVector faces,
-        vector[int] contrained_faces,
     ) except +
-    # MeshOutput pmp_corefine_and_union(
-    #     PointVector vertices1,
-    #     IndexVector faces1,
-    #     PointVector vertices2,
-    #     IndexVector faces2,
-    # ) except +
+    pair[vector[int], vector[int]] pmp_connected_components(
+        PointVector vertices,
+        IndexVector faces,
+        IndexVector constrained_edges,
+    ) except +
+    vector[vector[int]] pmp_detect_sharp_edges(
+        PointVector vertices, IndexVector faces, float angle
+    ) except +
+    SurfaceMesh pmp_duplicate_non_manifold_edges_in_polygon_soup(
+        PointVector vertices, IndexVector faces
+    ) except +
+
+    SurfaceMeshWithPMaps pmp_duplicate_non_manifold_vertices(
+        PointVector vertices, IndexVector faces
+    ) except +
+    pair[pair[SurfaceMeshWithFaceidAndPMaps,SurfaceMeshWithFaceidAndPMaps], pair[vector[vector[int]], vector[vector[int]]]] pmp_corefine(
+        PointVector v0, IndexVector f0, PointVector v1, IndexVector f1, vector[int], vector[int], cppbool return_intersection_edges
+    ) except +
+    cppbool pmp_do_intersect(
+        PointVector vertices0, IndexVector faces0, PointVector vertices1, IndexVector faces1,
+    ) except +
+    cppbool pmp_does_triangle_soup_self_intersect(
+        PointVector vertices,
+        vector[vector[unsigned int]] faces
+    ) except +
     IndexVector pmp_extract_boundary_cycles(
         PointVector vertices, IndexVector faces
     ) except +
     PointVector pmp_fair(
+        PointVector vertices, IndexVector faces, vector[int] indices, int continuity
+    ) except +
+
+    SurfaceMeshWithFaceidAndPMaps pmp_flip_edges(
         PointVector vertices,
         IndexVector faces,
-        vector[int] indices,
+        IndexVector edges,
+        cppbool allow_normal_flips,
+        vector[int] face_id,
     ) except +
-    IndexVector pmp_find_border_edges(PointVector vertices, IndexVector faces) except +
-    MeshOutput pmp_hole_fill_refine_fair(
+
+    SurfaceMesh pmp_hole_fill_refine_fair(
         PointVector vertices, IndexVector faces
     ) except +
     IndexVector pmp_intersecting_meshes(
@@ -56,32 +100,68 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         IndexVector faces1,
     ) except +
     cppbool pmp_is_polygon_soup_a_polygon_mesh(IndexVector faces) except +
-    MeshOutput pmp_isotropic_remeshing(
+
+    SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
         PointVector vertices,
         IndexVector faces,
         double target_edge_length,
         int n_iter,
         cppbool protect_constraints,
-        vector[int] faces_is_selected,
+        cppbool collapse_constraints,
+        cppbool do_split,
+        cppbool do_collapse,
+        cppbool do_flip,
+        int number_of_relaxation_steps,
+        cppbool disallow_surface_crossing,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
     ) except +
-    MeshOutput pmp_isotropic_remeshing(
+
+    SurfaceMeshWithFaceidAndPMaps pmp_isotropic_remeshing(
         PointVector vertices,
         IndexVector faces,
         double target_edge_length,
         int n_iter,
         cppbool protect_constraints,
-        vector[int] faces_is_selected,
-        vector[vector[int]] edges_is_constrained,
+        cppbool collapse_constraints,
+        cppbool do_split,
+        cppbool do_collapse,
+        cppbool do_flip,
+        int number_of_relaxation_steps,
+        cppbool disallow_surface_crossing,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
+        vector[vector[int]] edge_is_constrained,
     ) except +
-    MeshWithPMaps pmp_isotropic_remeshing_with_id(
+
+    SurfaceMeshWithFaceidAndPMaps pmp_collapse_halfedges(
+        PointVector vertices,
+        IndexVector faces,
+        IndexVector edges,
+        vector[int] face_id,
+    ) except +
+
+    SurfaceMeshWithFaceidAndPMaps pmp_collapse_short_edges(
         PointVector vertices,
         IndexVector faces,
         double target_edge_length,
-        int n_iter,
-        cppbool protect_constraints,
-        vector[int] faces_is_selected,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
     ) except +
-    MeshOutput pmp_adaptive_remeshing(
+
+    SurfaceMeshWithFaceidAndPMaps pmp_collapse_short_edges(
+        PointVector vertices,
+        IndexVector faces,
+        double target_edge_length,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
+        vector[vector[int]] edge_is_constrained,
+    ) except +
+    SurfaceMeshWithFaceidAndPMaps pmp_adaptive_remeshing(
         PointVector vertices,
         IndexVector faces,
         double error_tol,
@@ -89,9 +169,17 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         double edge_length_max,
         int n_iter,
         cppbool protect_constraints,
-        vector[int] faces_is_selected,
+        cppbool collapse_constraints,
+        cppbool do_split,
+        cppbool do_collapse,
+        cppbool do_flip,
+        int number_of_relaxation_steps,
+        cppbool disallow_surface_crossing,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
     ) except +
-    MeshOutput pmp_adaptive_remeshing(
+    SurfaceMeshWithFaceidAndPMaps pmp_adaptive_remeshing(
         PointVector vertices,
         IndexVector faces,
         double error_tol,
@@ -99,36 +187,111 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         double edge_length_max,
         int n_iter,
         cppbool protect_constraints,
-        vector[int] faces_is_selected,
-        vector[vector[int]] edges_is_constrained,
+        cppbool collapse_constraints,
+        cppbool do_split,
+        cppbool do_collapse,
+        cppbool do_flip,
+        int number_of_relaxation_steps,
+        cppbool disallow_surface_crossing,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
+        vector[vector[int]] edge_is_constrained,
+    ) except +
+    SurfaceMeshWithFaceidAndPMaps pmp_custom_remeshing(
+        PointVector vertices,
+        IndexVector faces,
+        vector[float] sizing,
+        int n_iter,
+        cppbool protect_constraints,
+        cppbool collapse_constraints,
+        cppbool do_split,
+        cppbool do_collapse,
+        cppbool do_flip,
+        int number_of_relaxation_steps,
+        cppbool disallow_surface_crossing,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
+    ) except +
+    SurfaceMeshWithFaceidAndPMaps pmp_custom_remeshing(
+        PointVector vertices,
+        IndexVector faces,
+        vector[float] sizing,
+        int n_iter,
+        cppbool protect_constraints,
+        cppbool collapse_constraints,
+        cppbool do_split,
+        cppbool do_collapse,
+        cppbool do_flip,
+        int number_of_relaxation_steps,
+        cppbool disallow_surface_crossing,
+        vector[int] face_id,
+        vector[int] face_is_selected,
+        vector[int] vertex_is_constrained,
+        vector[vector[int]] edge_is_constrained,
     ) except +
 
-    MeshOutput pmp_merge_duplicate_points_in_polygon_soup(
+    SurfaceMesh pmp_merge_duplicate_points_in_polygon_soup(
+        PointVector vertices, IndexVector faces
+    ) except +
+    SurfaceMesh pmp_merge_duplicate_polygons_in_polygon_soup(
+        PointVector vertices, IndexVector faces
+    ) except +
+    SurfaceMesh pmp_orient(
+        PointVector vertices, IndexVector faces, cppbool outward_orientation
+    ) except +
+    pair[cppbool, SurfaceMesh] pmp_orient_polygon_soup(
         PointVector vertices, IndexVector faces
     ) except +
 
-    MeshOutput pmp_duplicate_non_manifold_edges_in_polygon_soup(
+    vector[int] pmp_non_manifold_vertices(
         PointVector vertices, IndexVector faces
     ) except +
 
-    MeshWithPMaps pmp_stitch_borders(PointVector vertices, IndexVector faces) except +
-    # MeshOutput pmp_snap_borders(
+    SurfaceMeshWithPMaps pmp_stitch_borders(PointVector vertices, IndexVector faces) except +
+    # SurfaceMesh pmp_snap_borders(
     #     PointVector vertices, IndexVector faces,
     # )
-    vector[cppbool] pmp_points_inside_surface(
+    vector[cppbool] pmp_points_inside(
         PointVector vertices,
         IndexVector faces,
         PointVector points,
         cppbool on_boundary_is_inside,
     ) except +
 
-    # MeshOutput pmp_repair_mesh(
+    # SurfaceMesh pmp_repair_mesh(
     #     PointVector vertices,
     #     IndexVector faces,
     # ) except +
 
-    MeshOutput pmp_remove_self_intersections(
-        PointVector vertices, IndexVector faces
+    SurfaceMesh pmp_refine(
+        PointVector vertices,
+        IndexVector faces,
+        vector[int] faces_to_refine,
+        float density
+    ) except +
+    SurfaceMeshWithPMaps pmp_remove_almost_degenerate_faces(
+        PointVector vertices,
+        IndexVector faces,
+        vector[int] face_is_selected,
+        double cap_threshold,
+        double needle_threshold,
+        vector[int] vertex_is_constrained,
+    ) except +
+    SurfaceMeshWithPMaps pmp_remove_almost_degenerate_faces(
+        PointVector vertices,
+        IndexVector faces,
+        vector[int] face_is_selected,
+        double cap_threshold,
+        double needle_threshold,
+        vector[int] vertex_is_constrained,
+        vector[vector[int]] edge_is_constrained,
+    ) except +
+    SurfaceMeshWithPMaps pmp_remove_self_intersections(
+        PointVector vertices,
+        IndexVector faces,
+        vector[int] face_is_selected
     ) except +
     IndexVector pmp_self_intersections(PointVector vertices, IndexVector faces) except +
 
@@ -163,6 +326,10 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         int n_iter
     ) except +
 
+    IndexVector pmp_triangle_soup_self_intersections(
+        PointVector vertices, IndexVector faces
+    ) except +
+
     vector[vector[float]] pmp_interpolated_corrected_curvatures(
         PointVector vertices,
         IndexVector faces,
@@ -179,23 +346,51 @@ cdef extern from "polygon_mesh_processing_src.cpp" nogil:
         cppbool use_safety_constraints
     ) except +
 
-    MeshOutput pmp_split_with_plane(
+    SurfaceMeshWithFaceidAndPMaps pmp_split_edges(
+        PointVector vertices,
+        IndexVector faces,
+        IndexVector edges,
+        vector[int] face_id,
+    ) except +
+
+    SurfaceMeshWithFaceidAndPMaps pmp_split_long_edges(
+        PointVector vertices,
+        IndexVector faces,
+        double sizing,
+        vector[int] face_id,
+    ) except +
+    SurfaceMeshWithFaceidAndPMaps pmp_split_long_edges(
+        PointVector vertices,
+        IndexVector faces,
+        double sizing,
+        vector[int] face_id,
+        IndexVector edges,
+    ) except +
+
+    SurfaceMesh pmp_split_with_plane(
         PointVector vertices,
         IndexVector faces,
         vector[float] plane_origin,
         vector[float] plane_direction,
     ) except +
-    pair[MeshOutput,MeshOutput] pmp_split_with_surface(
+    pair[SurfaceMesh,SurfaceMesh] pmp_split_with_surface(
         PointVector mesh_v,
         IndexVector mesh_f,
         PointVector splitter_v,
         IndexVector splitter_f
     ) except +
 
-cdef _from_MeshOutput(MeshOutput out):
+cdef _from_SurfaceMesh(SurfaceMesh out):
     return np.array(out.vertices, float), np.array(out.faces, int)
 
-cdef _from_MeshWithPMaps(MeshWithPMaps out):
+cdef _from_SurfaceMeshWithFaceid(SurfaceMeshWithFaceid out):
+    v = np.array(out.vertices, float)
+    f = np.array(out.faces, int)
+    fid = np.array(out.face_id, int)
+    return v, f, fid
+
+
+cdef _from_SurfaceMeshWithPMaps(SurfaceMeshWithPMaps out):
     v = np.array(out.vertices, float)
     f = np.array(out.faces, int)
     v_pmap = np.array(out.vertices_pmap, int)
@@ -203,15 +398,39 @@ cdef _from_MeshWithPMaps(MeshWithPMaps out):
     return v, f, v_pmap, f_pmap
 
 
+cdef _from_SurfaceMeshWithFaceidAndPMaps(SurfaceMeshWithFaceidAndPMaps out):
+    v = np.array(out.vertices, float)
+    f = np.array(out.faces, int)
+    fid = np.array(out.face_id, int)
+    v_pmap = np.array(out.vertices_pmap, int)
+    f_pmap = np.array(out.faces_pmap, int)
+    return v, f, fid, v_pmap, f_pmap
+
+
 # def snap_borders(vertices: npt.NDArray, faces: npt.NDArray):
 #     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
 #     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-#     cdef MeshOutput out
+#     cdef SurfaceMesh out
 
 #     out = pmp_snap_borders(cpp_v, cpp_f)
 #     v = np.array(out.first, dtype=float)
 #     f = np.array(out.second, dtype=int)
 #     return v, f
+
+
+# def autorefine_triangle_soup(
+#     vertices: npt.NDArray,
+#     faces: npt.NDArray,
+#     apply_iterative_snap_rounding: bool = True,
+#     n_iter: int = 5
+# ):
+#     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+#     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+#     cdef cppbool cpp_snap = apply_iterative_snap_rounding
+#     cdef unsigned int cpp_n_iter = <unsigned int>n_iter
+#     cdef SurfaceMesh out
+#     out = pmp_autorefine_triangle_soup(cpp_v, cpp_f, cpp_snap, cpp_n_iter)
+#     return _from_SurfaceMesh(out)
 
 def clip(
         vertices: npt.NDArray,
@@ -221,7 +440,6 @@ def clip(
         # clip_volume: bool = True,
     ) -> tuple[npt.NDArray, npt.NDArray]:
     """Compute the intersecting pairs of triangles in a surface mesh.
-
 
     Parameters
     ----------
@@ -238,16 +456,16 @@ def clip(
     cdef np.ndarray[float] cpp_orig = np.ascontiguousarray(plane_origin, dtype=np.float32)
     cdef np.ndarray[float] cpp_dir = np.ascontiguousarray(plane_direction, dtype=np.float32)
     # cdef cppbool cpp_clip_volume = clip_volume
-    cdef MeshOutput out
+    cdef SurfaceMesh out
 
     out = pmp_clip(cpp_v, cpp_f, cpp_orig, cpp_dir)
-    return _from_MeshOutput(out)
+    return _from_SurfaceMesh(out)
 
 def connected_components(
-        vertices: npt.ArrayLike,
-        faces: npt.ArrayLike,
-        constrained_faces: npt.ArrayLike | None = None
-    ) -> tuple[npt.NDArray, npt.NDArray]:
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    constrained_edges: npt.ArrayLike | None = None
+) -> tuple[npt.NDArray, npt.NDArray]:
     """Label connected components on a surface (graph).
 
     Parameters
@@ -256,7 +474,9 @@ def connected_components(
         Vertices of the surfaces, shape = (N, 3).
     faces: npt.ArrayLike
         Faces of the surface, shape = (M, 3).
-    constrained_faces: Union[npt.ArrayLike, None]
+    constrained_edges: Union[npt.ArrayLike, None]
+
+
         The relevant function in CGAL takes a set of *edges* to constrain,
         however, this interface allows specifying *faces* instead such that
         only the *outer* edges of these faces are used as constraints. By
@@ -269,34 +489,98 @@ def connected_components(
     component_size : npt.NDArray
         The size associated with each label.
     """
-    constrained_faces = [] if constrained_faces is None else constrained_faces
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_constrained_faces = np.ascontiguousarray(constrained_faces, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_ecm
+
     cdef pair[vector[int], vector[int]] out
 
-    out = pmp_connected_components(cpp_v, cpp_f, cpp_constrained_faces)
+    if constrained_edges is None:
+        out = pmp_connected_components(cpp_v, cpp_f)
+    else:
+        cpp_ecm = np.ascontiguousarray(constrained_edges, dtype=np.int32)
+        out = pmp_connected_components(cpp_v, cpp_f, cpp_ecm)
+
     component_label = np.array(out.first, dtype=int)
     component_size = np.array(out.second, dtype=int)
 
     return component_label, component_size
 
-# def corefine_and_union(vertices1, faces1, vertices2, faces2):
-#     cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
-#     cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
-#     cdef np.ndarray[float, ndim=2] cpp_v2 = np.ascontiguousarray(vertices2, dtype=np.float32)
-#     cdef np.ndarray[int, ndim=2] cpp_f2 = np.ascontiguousarray(faces2, dtype=np.int32)
-#     cdef MeshOutput out
+def detect_sharp_edges(vertices, faces, angle: float = 60.0):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef vector[vector[int]] cpp_e
+    cpp_e = pmp_detect_sharp_edges(cpp_v, cpp_f, angle)
+    return np.array(cpp_e, dtype=int)
 
-#     out = pmp_corefine_and_union(cpp_v1, cpp_f1, cpp_v2, cpp_f2)
-#     return _from_MeshOutput(out)
+def corefine(
+    vertices0,
+    faces0,
+    vertices1,
+    faces1,
+    face_id0,
+    face_id1,
+    return_intersection_edges: bool
+):
+    cdef np.ndarray[float, ndim=2] cpp_v0 = np.ascontiguousarray(vertices0, dtype=np.float32)
+    cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f0 = np.ascontiguousarray(faces0, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid0 = np.ascontiguousarray(face_id0, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid1 = np.ascontiguousarray(face_id1, dtype=np.int32)
+    cdef pair[pair[SurfaceMeshWithFaceidAndPMaps,SurfaceMeshWithFaceidAndPMaps], pair[vector[vector[int]], vector[vector[int]]]] out
+
+    out = pmp_corefine(cpp_v0, cpp_f0, cpp_v1, cpp_f1, cpp_fid0, cpp_fid1, return_intersection_edges)
+    vf0 = _from_SurfaceMeshWithFaceidAndPMaps(out.first.first)
+    vf1 = _from_SurfaceMeshWithFaceidAndPMaps(out.first.second)
+    e0 = np.array(out.second.first, dtype=int)
+    e1 = np.array(out.second.second, dtype=int)
+
+    return vf0, vf1, e0, e1
+
+def do_intersect(
+    vertices0: npt.ArrayLike,
+    faces0: npt.ArrayLike,
+    vertices1: npt.ArrayLike,
+    faces1: npt.ArrayLike
+) -> bool:
+    """Return true if there exists a face in mesh0 and a face in mesh1 which interesect.
+
+    Parameters
+    ----------
+    vertices0 : npt.ArrayLike
+    faces0 : npt.ArrayLike
+    vertices1 : npt.ArrayLike
+    faces1 : npt.ArrayLike
+
+    Returns
+    -------
+
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v0 = np.ascontiguousarray(vertices0, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f0 = np.ascontiguousarray(faces0, dtype=np.int32)
+    cdef np.ndarray[float, ndim=2] cpp_v1 = np.ascontiguousarray(vertices1, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f1 = np.ascontiguousarray(faces1, dtype=np.int32)
+    return pmp_do_intersect(cpp_v0, cpp_f0, cpp_v1, cpp_f1)
+
+def does_triangle_soup_self_intersect(vertices: npt.NDArray, faces: npt.NDArray) -> bool:
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.uint32)
+    return pmp_does_triangle_soup_self_intersect(cpp_v, cpp_f)
 
 def duplicate_non_manifold_edges_in_polygon_soup(vertices,faces):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef MeshOutput out
+    cdef SurfaceMesh out
     out = pmp_duplicate_non_manifold_edges_in_polygon_soup(cpp_v, cpp_f)
-    return _from_MeshOutput(out)
+    return _from_SurfaceMesh(out)
+
+def duplicate_non_manifold_vertices(vertices, faces):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef SurfaceMeshWithPMaps out
+    out = pmp_duplicate_non_manifold_vertices(cpp_v, cpp_f)
+    return _from_SurfaceMeshWithPMaps(out)
 
 def extract_boundary_cycles(vertices: npt.NDArray, faces: npt.NDArray):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -305,23 +589,56 @@ def extract_boundary_cycles(vertices: npt.NDArray, faces: npt.NDArray):
     out = pmp_extract_boundary_cycles(cpp_v, cpp_f)
     return out
 
-def fair(vertices, faces, vertex_indices):
+def fair(vertices, faces, vertex_indices, continuity: int = 1):
     """Mesh fairing."""
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[int] cpp_vi = np.ascontiguousarray(vertex_indices, dtype=np.int32)
     cdef PointVector v
+    assert 2 >= continuity >= 0, "continuity should be in {0,1,2}"
 
-    v = pmp_fair(cpp_v, cpp_f, cpp_vi)
+    v = pmp_fair(cpp_v, cpp_f, cpp_vi, continuity)
 
     return np.array(v, dtype=float)
 
-def find_border_edges(vertices: npt.NDArray, faces: npt.NDArray) -> npt.NDArray:
-    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
-    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef IndexVector out
-    out = pmp_find_border_edges(cpp_v, cpp_f)
-    return np.array(out, dtype=int)
+def flip_edges(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    edges: npt.ArrayLike,
+    allow_normal_flips: bool = False,
+    face_id: npt.ArrayLike | None = None,
+):
+    """Flip edges.
+
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+
+    Returns
+    -------
+    v : npt.NDArray
+        The new vertices.
+    f : npt.NDArray
+        The new faces.
+
+    References
+    ----------
+
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
+
+    """
+    face_id = [] if face_id is None else face_id
+
+    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] ce = np.ascontiguousarray(edges, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef SurfaceMeshWithFaceidAndPMaps out
+
+    out = pmp_flip_edges(cv, cf, ce, allow_normal_flips, cpp_fid)
+
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
 
 def hole_fill_refine_fair(vertices: npt.NDArray, faces: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
     """Compute the intersecting pairs of triangles in a surface mesh.
@@ -337,9 +654,9 @@ def hole_fill_refine_fair(vertices: npt.NDArray, faces: npt.NDArray) -> tuple[np
     """
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef MeshOutput out
+    cdef SurfaceMesh out
     out = pmp_hole_fill_refine_fair(cpp_v, cpp_f)
-    return _from_MeshOutput(out)
+    return _from_SurfaceMesh(out)
 
 def interpolated_corrected_curvatures(vertices: npt.ArrayLike, faces: npt.ArrayLike):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
@@ -395,123 +712,25 @@ def is_polygon_soup_a_polygon_mesh(faces: npt.ArrayLike) -> bool:
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     return pmp_is_polygon_soup_a_polygon_mesh(cpp_f)
 
-def isotropic_remeshing(
-        vertices: npt.ArrayLike,
-        faces: npt.ArrayLike,
-        target_edge_length: float,
-        n_iter: int = 1,
-        protect_constraints: bool = False,
-        faces_is_selected: npt.ArrayLike | None = None,
-        edges_is_constrained: npt.ArrayLike | None = None,
-    ):
-    """Isotropic surface remeshing. Remeshing is achieved by a combination of
-    edge splits/flips/collapses, tangential relaxation, and projection back
-    onto the original surface.
-
-    Parameters
-    ----------
-    vertices: npt.ArrayLike
-    faces: npt.ArrayLike
-    target_edge_length: float
-        The target edge length for the isotropic remesher. This defines the
-        resolution of the resulting surface.
-    n_iter: int
-        Number of iterations of the above-mentioned atomic operations.
-
-    Returns
-    -------
-    v : npt.NDArray
-        The new vertices.
-    f : npt.NDArray
-        The new faces.
-
-    References
-    ----------
-
-    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
-
-    """
-    faces_is_selected = [] if faces_is_selected is None else faces_is_selected
-    no_edges_is_constrained = edges_is_constrained is None
-    edges_is_constrained = [[]] if no_edges_is_constrained else edges_is_constrained
-
-    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
-    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_faces_is_selected = np.ascontiguousarray(faces_is_selected, dtype=np.int32)
-    cdef vector[vector[int]] cpp_constr_edges
-    cdef MeshOutput out
-
-    if no_edges_is_constrained:
-        out = pmp_isotropic_remeshing(
-            cv, cf, target_edge_length, n_iter, protect_constraints, cpp_faces_is_selected
-        )
-    else:
-        cpp_constr_edges = np.ascontiguousarray(edges_is_constrained, dtype=np.int32)
-        out = pmp_isotropic_remeshing(
-            cv, cf, target_edge_length, n_iter, protect_constraints, cpp_faces_is_selected, cpp_constr_edges,
-        )
-
-    return _from_MeshOutput(out)
-
-def isotropic_remeshing_with_id(
-        vertices: npt.ArrayLike,
-        faces: npt.ArrayLike,
-        target_edge_length: float,
-        n_iter: int = 1,
-        protect_constraints: bool = False,
-        faces_is_selected: npt.ArrayLike | None = None,
-    ):
-    """Isotropic surface remeshing. Remeshing is achieved by a combination of
-    edge splits/flips/collapses, tangential relaxation, and projection back
-    onto the original surface.
-
-    Parameters
-    ----------
-    vertices: npt.ArrayLike
-    faces: npt.ArrayLike
-    target_edge_length: float
-        The target edge length for the isotropic remesher. This defines the
-        resolution of the resulting surface.
-    n_iter: int
-        Number of iterations of the above-mentioned atomic operations.
-
-    Returns
-    -------
-    v : npt.NDArray
-        The new vertices.
-    f : npt.NDArray
-        The new faces.
-
-    References
-    ----------
-
-    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
-
-    """
-    faces_is_selected = [] if faces_is_selected is None else faces_is_selected
-
-    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
-    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_faces_is_selected = np.ascontiguousarray(faces_is_selected, dtype=np.int32)
-    cdef MeshWithPMaps out
-
-    out = pmp_isotropic_remeshing_with_id(
-        cpp_v, cpp_f, target_edge_length, n_iter, protect_constraints, cpp_faces_is_selected,
-    )
-    return _from_MeshWithPMaps(out)
-
-
 def adaptive_remeshing(
-        vertices: npt.ArrayLike,
-        faces: npt.ArrayLike,
-        error_tol: float,
-        edge_length_min: float,
-        edge_length_max: float,
-        n_iter: int = 1,
-        protect_constraints: bool = False,
-        faces_is_selected: npt.ArrayLike | None = None,
-        edges_is_constrained: npt.ArrayLike | None = None,
-    ):
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    error_tol: float,
+    edge_length_min: float,
+    edge_length_max: float,
+    face_id: npt.ArrayLike | None = None,
+    face_is_selected: npt.ArrayLike | None = None,
+    vertex_is_constrained: npt.ArrayLike | None = None,
+    edge_is_constrained: npt.ArrayLike | None = None,
+    n_iter: int = 1,
+    protect_constraints: bool = False,
+    collapse_constraints: bool = True,
+    do_split: bool = True,
+    do_collapse: bool = True,
+    do_flip: bool = True,
+    number_of_relaxation_steps: int = 1,
+    disallow_surface_crossing=False,
+):
     """Isotropic surface remeshing. Remeshing is achieved by a combination of
     edge splits/flips/collapses, tangential relaxation, and projection back
     onto the original surface.
@@ -539,41 +758,415 @@ def adaptive_remeshing(
     https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
 
     """
-    faces_is_selected = [] if faces_is_selected is None else faces_is_selected
-    no_edges_is_constrained = edges_is_constrained is None
-    edges_is_constrained = [[]] if no_edges_is_constrained else edges_is_constrained
+    face_id = [] if face_id is None else face_id
+    face_is_selected = [] if face_is_selected is None else face_is_selected
+    vertex_is_constrained = [] if vertex_is_constrained is None else vertex_is_constrained
 
     cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef np.ndarray[int] cpp_faces_is_selected = np.ascontiguousarray(faces_is_selected, dtype=np.int32)
-    cdef vector[vector[int]] cpp_constr_edges
-    cdef MeshOutput out
+    cdef np.ndarray[int] cpp_faces_sel = np.ascontiguousarray(face_is_selected, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef np.ndarray[int, ndim=1] cpp_vcm = np.ascontiguousarray(vertex_is_constrained, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_ecm
+    cdef SurfaceMeshWithFaceidAndPMaps out
 
-    if no_edges_is_constrained:
+    if edge_is_constrained is None:
         out = pmp_adaptive_remeshing(
-            cv, cf, error_tol, edge_length_min, edge_length_max, n_iter, protect_constraints, cpp_faces_is_selected
+            cv,
+            cf,
+            error_tol,
+            edge_length_min,
+            edge_length_max,
+            n_iter,
+            protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm
         )
     else:
-        cpp_constr_edges = np.ascontiguousarray(edges_is_constrained, dtype=np.int32)
+        cpp_ecm = np.ascontiguousarray(edge_is_constrained, dtype=np.int32)
         out = pmp_adaptive_remeshing(
-            cv, cf, error_tol, edge_length_min, edge_length_max, n_iter, protect_constraints, cpp_faces_is_selected, cpp_constr_edges,
+            cv,
+            cf,
+            error_tol,
+            edge_length_min,
+            edge_length_max,
+            n_iter,
+            protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm,
+            cpp_ecm
         )
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
 
-    return _from_MeshOutput(out)
+
+def custom_remeshing(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    sizing: npt.ArrayLike,
+    face_id: npt.ArrayLike | None = None,
+    face_is_selected: npt.ArrayLike | None = None,
+    vertex_is_constrained: npt.ArrayLike | None = None,
+    edge_is_constrained: npt.ArrayLike | None = None,
+    n_iter: int = 1,
+    protect_constraints: bool = False,
+    collapse_constraints: bool = True,
+    do_split: bool = True,
+    do_collapse: bool = True,
+    do_flip: bool = True,
+    number_of_relaxation_steps: int = 1,
+    disallow_surface_crossing=False,
+):
+    """Isotropic surface remeshing. Remeshing is achieved by a combination of
+    edge splits/flips/collapses, tangential relaxation, and projection back
+    onto the original surface.
+
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+    target_edge_length: float
+        The target edge length for the isotropic remesher. This defines the
+        resolution of the resulting surface.
+    n_iter: int
+        Number of iterations of the above-mentioned atomic operations.
+
+    Returns
+    -------
+    v : npt.NDArray
+        The new vertices.
+    f : npt.NDArray
+        The new faces.
+
+    References
+    ----------
+
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
+
+    """
+    face_id = [] if face_id is None else face_id
+    face_is_selected = [] if face_is_selected is None else face_is_selected
+    vertex_is_constrained = [] if vertex_is_constrained is None else vertex_is_constrained
+
+    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[float, ndim=1] csizing = np.ascontiguousarray(sizing, dtype=np.float32)
+    cdef np.ndarray[int] cpp_faces_sel = np.ascontiguousarray(face_is_selected, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef np.ndarray[int, ndim=1] cpp_vcm = np.ascontiguousarray(vertex_is_constrained, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_ecm
+    cdef SurfaceMeshWithFaceidAndPMaps out
+
+    if edge_is_constrained is None:
+        out = pmp_custom_remeshing(
+            cv,
+            cf,
+            csizing,
+            n_iter,
+            protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm
+        )
+    else:
+        cpp_ecm = np.ascontiguousarray(edge_is_constrained, dtype=np.int32)
+        out = pmp_custom_remeshing(
+            cv,
+            cf,
+            csizing,
+            n_iter,
+            protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm,
+            cpp_ecm
+        )
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
+
+
+def isotropic_remeshing(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    target_edge_length: float,
+    face_id: npt.ArrayLike | None = None,
+    face_is_selected: npt.ArrayLike | None = None,
+    vertex_is_constrained: npt.ArrayLike | None = None,
+    edge_is_constrained: npt.ArrayLike | None = None,
+    n_iter: int = 1,
+    protect_constraints: bool = False,
+    collapse_constraints: bool = True,
+    do_split: bool = True,
+    do_collapse: bool = True,
+    do_flip: bool = True,
+    number_of_relaxation_steps: int = 1,
+    disallow_surface_crossing=False,
+):
+    """Isotropic surface remeshing. Remeshing is achieved by a combination of
+    edge splits/flips/collapses, tangential relaxation, and projection back
+    onto the original surface.
+
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+    target_edge_length: float
+        The target edge length for the isotropic remesher. This defines the
+        resolution of the resulting surface.
+    n_iter: int
+        Number of iterations of the above-mentioned atomic operations.
+
+    Returns
+    -------
+    v : npt.NDArray
+        The new vertices.
+    f : npt.NDArray
+        The new faces.
+
+    References
+    ----------
+
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
+
+    """
+    face_id = [] if face_id is None else face_id
+    face_is_selected = [] if face_is_selected is None else face_is_selected
+    vertex_is_constrained = [] if vertex_is_constrained is None else vertex_is_constrained
+
+    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_faces_sel = np.ascontiguousarray(face_is_selected, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef np.ndarray[int, ndim=1] cpp_vcm = np.ascontiguousarray(vertex_is_constrained, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_ecm
+    cdef SurfaceMeshWithFaceidAndPMaps out
+
+    if edge_is_constrained is None:
+        out = pmp_isotropic_remeshing(
+            cv,
+            cf,
+            target_edge_length,
+            n_iter,
+            protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm
+        )
+    else:
+        cpp_ecm = np.ascontiguousarray(edge_is_constrained, dtype=np.int32)
+        out = pmp_isotropic_remeshing(
+            cv,
+            cf,
+            target_edge_length,
+            n_iter,
+            protect_constraints,
+            collapse_constraints,
+            do_split,
+            do_collapse,
+            do_flip,
+            number_of_relaxation_steps,
+            disallow_surface_crossing,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm,
+            cpp_ecm
+        )
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
+
+
+def collapse_halfedges(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    edges: npt.ArrayLike,
+    face_id: npt.ArrayLike | None = None,
+):
+    """Collapse halfedges (i.e., directed edges).
+
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+
+    Returns
+    -------
+    v : npt.NDArray
+        The new vertices.
+    f : npt.NDArray
+        The new faces.
+
+    References
+    ----------
+
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
+
+    """
+    face_id = [] if face_id is None else face_id
+
+    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] ce = np.ascontiguousarray(edges, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef SurfaceMeshWithFaceidAndPMaps out
+
+    out = pmp_collapse_halfedges(cv, cf, ce, cpp_fid)
+
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
+
+
+def collapse_short_edges(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    target_edge_length: float,
+    face_id: npt.ArrayLike | None = None,
+    face_is_selected: npt.ArrayLike | None = None,
+    vertex_is_constrained: npt.ArrayLike | None = None,
+    edge_is_constrained: npt.ArrayLike | None = None,
+):
+    """Isotropic surface remeshing. Remeshing is achieved by a combination of
+    edge splits/flips/collapses, tangential relaxation, and projection back
+    onto the original surface.
+
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+    target_edge_length: float
+        The target edge length for the isotropic remesher. This defines the
+        resolution of the resulting surface.
+    n_iter: int
+        Number of iterations of the above-mentioned atomic operations.
+
+    Returns
+    -------
+    v : npt.NDArray
+        The new vertices.
+    f : npt.NDArray
+        The new faces.
+
+    References
+    ----------
+
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
+
+    """
+    face_id = [] if face_id is None else face_id
+    face_is_selected = [] if face_is_selected is None else face_is_selected
+    vertex_is_constrained = [] if vertex_is_constrained is None else vertex_is_constrained
+
+    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_faces_sel = np.ascontiguousarray(face_is_selected, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef np.ndarray[int, ndim=1] cpp_vcm = np.ascontiguousarray(vertex_is_constrained, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_ecm
+    cdef SurfaceMeshWithFaceidAndPMaps out
+
+    if edge_is_constrained is None:
+        out = pmp_collapse_short_edges(
+            cv,
+            cf,
+            target_edge_length,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm
+        )
+    else:
+        cpp_ecm = np.ascontiguousarray(edge_is_constrained, dtype=np.int32)
+        out = pmp_collapse_short_edges(
+            cv,
+            cf,
+            target_edge_length,
+            cpp_fid,
+            cpp_faces_sel,
+            cpp_vcm,
+            cpp_ecm
+        )
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
+
+
+
 
 def merge_duplicate_points_in_polygon_soup(vertices: npt.ArrayLike, faces: npt.ArrayLike):
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef MeshOutput out
+    cdef SurfaceMesh out
     out = pmp_merge_duplicate_points_in_polygon_soup(cpp_v, cpp_f)
-    return _from_MeshOutput(out)
+    return _from_SurfaceMesh(out)
+
+def merge_duplicate_polygons_in_polygon_soup(vertices: npt.ArrayLike, faces: npt.ArrayLike):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef SurfaceMesh out
+    out = pmp_merge_duplicate_polygons_in_polygon_soup(cpp_v, cpp_f)
+    return _from_SurfaceMesh(out)
+
+def non_manifold_vertices(vertices, faces):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef vector[int] out
+    out = pmp_non_manifold_vertices(cpp_v, cpp_f)
+    return np.array(out, dtype=int)
+
+def orient(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    outward_orientation: bool = True
+):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef SurfaceMesh out
+    out = pmp_orient(cpp_v, cpp_f, outward_orientation)
+    return _from_SurfaceMesh(out)
+
+def orient_polygon_soup(vertices: npt.ArrayLike, faces: npt.ArrayLike):
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef pair[cppbool, SurfaceMesh] out
+    out = pmp_orient_polygon_soup(cpp_v, cpp_f)
+    status = out.first
+    # status == true
+    #   operation succeeded
+    # status == false
+    #   some points were duplicated thus producing a combinatorically manifold
+    #   but self-intersecting mesh
+    return status, _from_SurfaceMesh(out.second)
 
 def points_inside_surface(
-        vertices: npt.NDArray,
-        faces: npt.NDArray,
-        points: npt.NDArray,
-        on_boundary_is_inside: bool = True,
-    ) -> npt.NDArray:
+    vertices: npt.NDArray,
+    faces: npt.NDArray,
+    points: npt.NDArray,
+    on_boundary_is_inside: bool = True,
+) -> npt.NDArray:
     """
 
     Parameters
@@ -597,13 +1190,67 @@ def points_inside_surface(
     cdef cppbool cpp_on_boundary_is_inside = on_boundary_is_inside
     cdef vector[cppbool] out
 
-    out = pmp_points_inside_surface(cpp_v, cpp_f, cpp_p, cpp_on_boundary_is_inside)
+    out = pmp_points_inside(cpp_v, cpp_f, cpp_p, cpp_on_boundary_is_inside)
 
     return np.array(out, dtype=bool)
 
+
+def refine(
+    vertices: npt.NDArray,
+    faces: npt.NDArray,
+    density: float = 2.0,
+    faces_to_refine: npt.NDArray | None = None,
+):
+    faces_to_refine = [] if faces_to_refine is None else faces_to_refine
+
+    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int] cpp_faces_to_refine = np.ascontiguousarray(faces_to_refine, dtype=np.int32)
+    cdef SurfaceMesh out
+
+    out =  pmp_refine(cv, cf, cpp_faces_to_refine, density)
+
+    return _from_SurfaceMesh(out)
+
+def remove_almost_degenerate_faces(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    face_is_selected: npt.ArrayLike | None = None,
+    cap_threshold: float = -0.9396926207859083,
+    needle_threshold: float = 4.0,
+    vertex_is_constrained: npt.ArrayLike | None = None,
+    edge_is_constrained: npt.ArrayLike | None = None,
+):
+    face_is_selected = [] if face_is_selected is None else face_is_selected
+    vertex_is_constrained = [] if vertex_is_constrained is None else vertex_is_constrained
+
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int, ndim=1] cpp_select = np.ascontiguousarray(face_is_selected, dtype=np.int32)
+
+    # cdef double cpp_cap_threshold = cap_threshold
+    # cdef double cpp_needle_threshold = needle_threshold
+
+    cdef np.ndarray[int, ndim=1] cpp_vcm = np.ascontiguousarray(vertex_is_constrained, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] cpp_ecm
+    cdef SurfaceMeshWithPMaps out
+
+    if edge_is_constrained is None:
+        out = pmp_remove_almost_degenerate_faces(
+            cpp_v, cpp_f, cpp_select, cap_threshold, needle_threshold, cpp_vcm
+        )
+    else:
+        cpp_ecm = np.ascontiguousarray(edge_is_constrained, dtype=np.int32)
+        out = pmp_remove_almost_degenerate_faces(
+            cpp_v, cpp_f, cpp_select, cap_threshold, needle_threshold, cpp_vcm, cpp_ecm
+        )
+    return _from_SurfaceMeshWithPMaps(out)
+
 def remove_self_intersections(
-        vertices: npt.NDArray, faces: npt.NDArray,
-    ) -> tuple[npt.NDArray, npt.NDArray]:
+    vertices: npt.NDArray,
+    faces: npt.NDArray,
+    face_is_selected: npt.ArrayLike | None = None,
+) -> tuple[npt.NDArray, npt.NDArray]:
     """Compute the intersecting pairs of triangles in a surface mesh.
 
     Parameters
@@ -617,11 +1264,15 @@ def remove_self_intersections(
     intersecting_pairs : npt
 
     """
+    face_is_selected = [] if face_is_selected is None else face_is_selected
+
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef MeshOutput out
-    out = pmp_remove_self_intersections(cpp_v, cpp_f)
-    return _from_MeshOutput(out)
+    cdef np.ndarray[int, ndim=1] cpp_select = np.ascontiguousarray(face_is_selected, dtype=np.int32)
+    cdef SurfaceMeshWithPMaps out
+
+    out = pmp_remove_self_intersections(cpp_v, cpp_f, cpp_select)
+    return _from_SurfaceMeshWithPMaps(out)
 
 # def repair_mesh(
 #         vertices: npt.NDArray, faces: npt.NDArray,
@@ -629,10 +1280,10 @@ def remove_self_intersections(
 #     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
 #     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
 
-#     cdef MeshOutput out
+#     cdef SurfaceMesh out
 
 #     out = pmp_repair_mesh(cpp_v, cpp_f)
-#      return _from_MeshOutput(out)
+#      return _from_SurfaceMesh(out)
 
 def self_intersections(vertices: npt.ArrayLike, faces: npt.ArrayLike) -> npt.NDArray:
     """Compute the intersecting pairs of triangles in a surface mesh.
@@ -705,12 +1356,12 @@ def smooth_angle_and_area(
     return np.array(v, dtype=float)
 
 def smooth_shape(
-        vertices: npt.ArrayLike,
-        faces: npt.ArrayLike,
-        constrained_vertices: npt.ArrayLike | None = None,
-        time: float = 0.1,
-        n_iter: int = 1
-    ) -> npt.NDArray:
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    constrained_vertices: npt.ArrayLike | None = None,
+    time: float = 0.1,
+    n_iter: int = 1
+) -> npt.NDArray:
     """Shape smoothing using mean curvature flow.
 
     Parameters
@@ -797,12 +1448,73 @@ def smooth_shape_by_curvature_threshold(
 
     return np.array(v, dtype=float)
 
+def split_edges(
+    vertices: npt.ArrayLike,
+    faces: npt.ArrayLike,
+    edges: npt.ArrayLike,
+    face_id: npt.ArrayLike | None = None,
+):
+    """Collapse halfedges (i.e., directed edges).
+
+    Parameters
+    ----------
+    vertices: npt.ArrayLike
+    faces: npt.ArrayLike
+
+    Returns
+    -------
+    v : npt.NDArray
+        The new vertices.
+    f : npt.NDArray
+        The new faces.
+
+    References
+    ----------
+
+    https://doc.cgal.org/latest/Polygon_mesh_processing/group__PMP__meshing__grp.html#gaa5cc92275df27f0baab2472ecbc4ea3f
+
+    """
+    face_id = [] if face_id is None else face_id
+
+    cdef np.ndarray[float, ndim=2] cv = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cf = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int, ndim=2] ce = np.ascontiguousarray(edges, dtype=np.int32)
+    cdef np.ndarray[int] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef SurfaceMeshWithFaceidAndPMaps out
+
+    out = pmp_split_edges(cv, cf, ce, cpp_fid)
+
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
+
+
+def split_long_edges(
+    vertices: npt.NDArray,
+    faces: npt.NDArray,
+    sizing: float,
+    face_id: npt.NDArray | None = None,
+    edges: npt.NDArray | None = None
+):
+    no_edges = edges is None
+    face_id = [] if face_id is None else face_id
+
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef np.ndarray[int, ndim=1] cpp_fid = np.ascontiguousarray(face_id, dtype=np.int32)
+    cdef SurfaceMeshWithFaceidAndPMaps out
+
+    if no_edges:
+        out = pmp_split_long_edges(cpp_v, cpp_f, sizing, cpp_fid)
+    else:
+        cpp_edges = np.ascontiguousarray(edges, dtype=np.int32)
+        out = pmp_split_long_edges(cpp_v, cpp_f, sizing, cpp_fid, cpp_edges)
+    return _from_SurfaceMeshWithFaceidAndPMaps(out)
+
 def split_with_plane(
-        vertices: npt.NDArray,
-        faces: npt.NDArray,
-        plane_origin: npt.NDArray,
-        plane_direction: npt.NDArray
-    ) -> tuple[npt.NDArray, npt.NDArray]:
+    vertices: npt.NDArray,
+    faces: npt.NDArray,
+    plane_origin: npt.NDArray,
+    plane_direction: npt.NDArray
+) -> tuple[npt.NDArray, npt.NDArray]:
     """Split surface with a plane.
 
     Parameters
@@ -819,16 +1531,16 @@ def split_with_plane(
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
     cdef np.ndarray[float] cpp_orig = np.ascontiguousarray(plane_origin, dtype=np.float32)
     cdef np.ndarray[float] cpp_dir = np.ascontiguousarray(plane_direction, dtype=np.float32)
-    cdef MeshOutput out
+    cdef SurfaceMesh out
     out = pmp_split_with_plane(cpp_v, cpp_f, cpp_orig, cpp_dir)
-    return _from_MeshOutput(out)
+    return _from_SurfaceMesh(out)
 
 def split_with_surface(
-        surface_v: npt.NDArray,
-        surface_f: npt.NDArray,
-        splitter_v: npt.NDArray,
-        splitter_f: npt.NDArray,
-    ) -> tuple[tuple[npt.NDArray, npt.NDArray],tuple[npt.NDArray, npt.NDArray]]:
+    surface_v: npt.NDArray,
+    surface_f: npt.NDArray,
+    splitter_v: npt.NDArray,
+    splitter_f: npt.NDArray,
+) -> tuple[tuple[npt.NDArray, npt.NDArray],tuple[npt.NDArray, npt.NDArray]]:
     """Split surface with another surface.
 
     Parameters
@@ -846,16 +1558,16 @@ def split_with_surface(
     cdef np.ndarray[int, ndim=2] cpp_s_f = np.ascontiguousarray(surface_f, dtype=np.int32)
     cdef np.ndarray[float, ndim=2] cpp_spl_v = np.ascontiguousarray(splitter_v, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_spl_f = np.ascontiguousarray(splitter_f, dtype=np.int32)
-    cdef pair[MeshOutput,MeshOutput] out
+    cdef pair[SurfaceMesh,SurfaceMesh] out
     out = pmp_split_with_surface(cpp_s_v, cpp_s_f, cpp_spl_v, cpp_spl_f)
-    return _from_MeshOutput(out.first),_from_MeshOutput(out.second)
+    return _from_SurfaceMesh(out.first),_from_SurfaceMesh(out.second)
 
 def stitch_borders(vertices: npt.NDArray, faces: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray]:
     cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
-    cdef MeshWithPMaps out
+    cdef SurfaceMeshWithPMaps out
     out = pmp_stitch_borders(cpp_v, cpp_f)
-    return _from_MeshWithPMaps(out)
+    return _from_SurfaceMeshWithPMaps(out)
 
 def tangential_relaxation(
         vertices: npt.ArrayLike,
@@ -887,6 +1599,30 @@ def tangential_relaxation(
     v = pmp_tangential_relaxation(cpp_v, cpp_f, cpp_constrained_vertices, n_iter)
 
     return np.array(v, dtype=float)
+
+def triangle_soup_self_intersections(
+    vertices: npt.ArrayLike, faces: npt.ArrayLike
+) -> npt.NDArray:
+    """Compute the intersecting pairs of triangles in a surface mesh.
+
+    Parameters
+    ----------
+    vertices : npt.ArrayLike
+
+    faces : npt.ArrayLike
+
+    Returns
+    -------
+    intersecting_pairs : npt
+
+    """
+    cdef np.ndarray[float, ndim=2] cpp_v = np.ascontiguousarray(vertices, dtype=np.float32)
+    cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)
+    cdef IndexVector intersecting_pairs
+
+    intersecting_pairs = pmp_triangle_soup_self_intersections(cpp_v, cpp_f)
+
+    return np.array(intersecting_pairs, dtype=int)
 
 # def volume_connected_components(faces, do_orientation_tests = False, do_self_intersection_tests = False):
 #     cdef np.ndarray[int, ndim=2] cpp_f = np.ascontiguousarray(faces, dtype=np.int32)

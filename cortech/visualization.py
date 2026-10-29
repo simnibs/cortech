@@ -5,6 +5,7 @@ import pyvista as pv
 import cortech.freesurfer
 from matplotlib.colors import ListedColormap
 
+
 class SurfaceVisualizer:
     def __init__(self, subject: str = "fsaverage"):
         """A class that provides access to the FsAverage surface files included
@@ -37,10 +38,15 @@ class SurfaceVisualizer:
         }
 
     def _get_files(self, what, path):
-        return {h: self.subpaths[path] / ".".join((h, what)) for h in cortech.freesurfer.HEMISPHERES}
+        return {
+            h: self.subpaths[path] / ".".join((h, what))
+            for h in cortech.freesurfer.HEMISPHERES
+        }
 
     def get_surface(self, surface):
-        assert surface in cortech.freesurfer.GEOMETRY, f"{surface} is not a valid surface."
+        assert surface in cortech.freesurfer.GEOMETRY, (
+            f"{surface} is not a valid surface."
+        )
         files = self._get_files(surface, "surface")
         return {
             k: dict(zip(("points", "tris"), nib.freesurfer.read_geometry(v)))
@@ -48,7 +54,9 @@ class SurfaceVisualizer:
         }
 
     def get_morph_data(self, data):
-        assert data in cortech.freesurfer.MORPH_DATA, f"{data} is not a valid morph data type."
+        assert data in cortech.freesurfer.MORPH_DATA, (
+            f"{data} is not a valid morph data type."
+        )
         files = self._get_files(data, "morph_data")
         return {k: nib.freesurfer.read_morph_data(v) for k, v in files.items()}
 
@@ -188,17 +196,22 @@ class FsPlotter:
             if remove_overlay:
                 self.remove_overlay(name)
 
-        p.view_xy(True)
+        p.view_xy(negative=True)
         # p.camera.zoom(np.sqrt(2))
         p.camera.zoom(1.3)
 
         return p
 
+
 def plot_surface(
-        surface, scalars=None, plotter=None, mesh_kwargs=None, plotter_kwargs=None
-    ):
+    surface, scalars=None, plotter=None, mesh_kwargs=None, plotter_kwargs=None
+):
     mesh_kwargs = mesh_kwargs or {}
     plotter_kwargs = plotter_kwargs or {}
+
+    if isinstance(scalars, str):
+        assert scalars == "face_id"
+        scalars = surface.face_id
 
     # if not isinstance(pv.PolyData):
     mesh = pv.make_tri_mesh(surface.vertices, surface.faces)
@@ -207,4 +220,4 @@ def plot_surface(
     p.add_mesh(mesh, scalars=scalars, **mesh_kwargs)
     # p.view_xy(True)
     # p.camera.zoom(1.3)
-    p.show()
+    return p

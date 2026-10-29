@@ -1,12 +1,19 @@
 project(
     'cortech',
-    'cpp', 'cython',
+    'cpp',
+    'cython',
     version: '0.1',
     meson_version: '>= 1.2',
     default_options: [
         'buildtype=debugoptimized',
         'b_ndebug=if-release',
-        'cpp_std=c++17',
+        'cpp_std=c++20',
+        # let meson set appropriate flags for things it knows about
+        # apply standard link-time optimizer
+        'b_lto=true',
+        # optimize for size (similar to setting -Os)
+        'optimization=s',
+        # 'b_sanitize=address'
     ],
 )
 
@@ -31,14 +38,6 @@ cython_prog = find_program(cython.cmd_array()[0])
 
 # GLOBAL compiler arguments
 
-# if host_os == 'linux'
-#
-# elif host_os == 'darwin'
-#
-# elif host_os == 'windows'
-#
-# endif
-
 # GCC options
 # warnings      https://gcc.gnu.org/onlinedocs/gcc/Warning-Options.html
 # optimization  https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html
@@ -47,8 +46,9 @@ cython_prog = find_program(cython.cmd_array()[0])
 
 # When buildtype=debug, meson automatically sets things like -g and -Wall
 
-# NumPy and Boost cause various warnings. Suppress them
+# cython: .pyx -> .cpp
 cython_cpp_args = cpp.get_supported_arguments(
+    # NumPy and Boost cause various warnings. Suppress them
     '-Wno-cpp',
     '-Wno-nonnull',
     '-Wno-sign-compare',
@@ -56,6 +56,21 @@ cython_cpp_args = cpp.get_supported_arguments(
 )
 add_project_arguments(cython_cpp_args, language: 'cython')
 
+# c++: .cpp -> .so
+cpp_args = cpp.get_supported_arguments(
+    '-frounding-math',  # Disable optimizations related to float rounding
+    # '-fno-omit-frame-pointer', # use with address sanitizer
+)
+
+# if host_os == 'linux'
+# elif host_os == 'darwin'
+if host_os == 'windows'
+    # allow large obj files
+    win_args = cpp.get_supported_arguments('/bigobj')
+    cpp_args += win_args
+endif
+
+add_project_arguments(cpp_args, language: 'cpp')
 
 # ==== GENERATORS ====
 
@@ -92,7 +107,7 @@ incdir_numpy = run_command(
 numpy_include = include_directories(incdir_numpy)
 
 numpy_dep = declare_dependency(include_directories: numpy_include)
-cgal_dep = dependency('cgal', version: '>= 6.0')
+cgal_dep = dependency('cgal', version: '>= 6.2')
 # ceres_dep = dependency('ceres-solver', version: '>= 2.2')
 # files = ['3RD-PARTY.md', 'LICENSE.txt', 'README.md']
 # install_data(files, install_dir: simnibs_install_dir / 'simnibs')
