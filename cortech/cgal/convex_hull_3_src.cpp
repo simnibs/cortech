@@ -10,7 +10,7 @@ using std::vector;
 using K = CGAL::Exact_predicates_inexact_constructions_kernel;
 using Surface_mesh = CGAL::Surface_mesh<K::Point_3>;
 
-std::pair<vector<vector<float>>, vector<vector<int>>> convex_hull_3(
+cortech::SurfaceMesh convex_hull_3(
     vector<vector<float>> vertices)
 {
     vector<K::Point_3> points = cortech::vertices_to_point3(vertices);
@@ -18,6 +18,5 @@ std::pair<vector<vector<float>>, vector<vector<int>>> convex_hull_3(
     // compute convex hull of non-collinear points
     Surface_mesh mesh;
     CGAL::convex_hull_3(points.begin(), points.end(), mesh);
-    auto pair = cortech::extract_vertices_and_faces(mesh);
-    return pair;
+    return cortech::extract_vertices_and_faces(mesh);
 }

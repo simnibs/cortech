@@ -17,7 +17,7 @@ using face_descriptor = boost::graph_traits<Surface_mesh>::face_descriptor;
 
 namespace SMS = CGAL::Surface_mesh_simplification;
 
-std::pair<vector<vector<float>>, vector<vector<int>>> sms_simplify(
+cortech::SurfaceMesh sms_simplify(
     vector<vector<float>> vertices,
     vector<vector<int>> faces,
     int stop_face_count)

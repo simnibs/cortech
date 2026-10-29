@@ -1,4 +1,5 @@
 #include <vector>
+#include <tuple>
 
 #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
 #include <CGAL/Surface_mesh.h>
@@ -7,6 +8,8 @@ using std::vector;
 
 using K = CGAL::Exact_predicates_inexact_constructions_kernel;
 using Surface_mesh = CGAL::Surface_mesh<K::Point_3>;
+
+#pragma once
 
 namespace cortech
 {
@@ -19,13 +22,28 @@ namespace cortech
         vector<vector<int>> faces;
     };
 
+    struct SurfaceMeshWithFaceid
+    {
+        vector<vector<float>> vertices;
+        vector<vector<int>> faces;
+        vector<int> face_id;
+    };
+
     struct SurfaceMeshWithPMaps
     {
         vector<vector<float>> vertices;
         vector<vector<int>> faces;
+        vector<int> vertices_pmap;
         vector<int> faces_pmap;
     };
-
+    struct SurfaceMeshWithFaceidAndPMaps
+    {
+        vector<vector<float>> vertices;
+        vector<vector<int>> faces;
+        vector<int> face_id;
+        vector<int> vertices_pmap;
+        vector<int> faces_pmap;
+    };
     struct VolumeMesh
     {
         vector<vector<float>> vertices;
@@ -42,21 +60,30 @@ namespace cortech
         vector<int> cells_pmap;
     };
 
+    Surface_mesh force_from_polygon_soup(
+        const vector<vector<float>> &vertices,
+        const vector<vector<int>> &faces);
     std::pair<Surface_mesh, vector<Surface_mesh::Vertex_index>> from_polygon_soup_with_vertex_map(
         const vector<vector<float>> &vertices,
-        const vector<vector<int>> &faces);
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
+    std::tuple<Surface_mesh, vector<Surface_mesh::Vertex_index>, vector<Surface_mesh::Face_index>> from_polygon_soup_with_vertex_and_face_map(
+        const vector<vector<float>> &vertices,
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
     Surface_mesh from_polygon_soup(
         const vector<vector<float>> &vertices,
-        const vector<vector<int>> &faces);
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
     Surface_mesh from_polygon_soup(
         const vector<K::Point_3> &points,
-        const vector<vector<int>> &faces);
+        const vector<vector<int>> &faces,
+        bool check_polygon_soup = true);
     vector<K::Point_3> vertices_to_point3(const vector<vector<float>> &vertices);
     vector<vector<float>> point3_to_vertices(const vector<K::Point_3> &points);
     vector<vector<float>> extract_vertices(const Surface_mesh &mesh);
     vector<vector<int>> extract_faces(const Surface_mesh &mesh);
-    std::pair<vector<vector<float>>, vector<vector<int>>> extract_vertices_and_faces(
-        const Surface_mesh &mesh);
+    SurfaceMesh extract_vertices_and_faces(const Surface_mesh &mesh);
 }
 
 // namespace CGAL_tr

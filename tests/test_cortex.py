@@ -1,14 +1,14 @@
 import numpy as np
 import pytest
 
-from cortech import Cortex, Hemisphere, Surface
+from cortech import Cortex, Hemisphere, ManifoldSurface
 
 
 class TestHemisphere:
     def test_init(self, diamond_vertices, diamond_faces):
         name = "lh"
-        white = Surface(diamond_vertices, diamond_faces)
-        pial = Surface(diamond_vertices, diamond_faces)
+        white = ManifoldSurface(diamond_vertices, diamond_faces)
+        pial = ManifoldSurface(diamond_vertices, diamond_faces)
         hemi = Hemisphere(name, white, pial)
 
         np.testing.assert_allclose(hemi.white.vertices, white.vertices)

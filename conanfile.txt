@@ -1,5 +1,5 @@
 [requires]
-cgal/6.1.1
+cgal/6.2
 
 [generators]
 PkgConfigDeps

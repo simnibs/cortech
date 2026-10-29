@@ -5,7 +5,9 @@ import numba.typed
 import numpy as np
 import numpy.typing as npt
 
-# from cortech.utils_cpp import map_values
+from cortech.utils_cpp import gradate_sizing_field, map_values
+
+__all__ = ["gradate_sizing_field", "map_values"]
 
 
 def atleast_nd_append(arr, n):
@@ -293,6 +295,14 @@ def bfs(
         n_visited,
         level,
     )
+
+def _ensure_array_is_index(index, required_size: int, invert: bool = False):
+    index = np.asarray(index)
+    if index.dtype == bool:
+        assert len(index) == required_size
+        return np.flatnonzero(~index if invert else index)
+    else:
+        return np.setdiff1d(np.arange(required_size), index) if invert else index
 
 
 @numba.njit

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from scipy.spatial import KDTree
 
-from cortech.surface import Sphere, Surface
+from cortech.surface import Sphere, ManifoldSurface
 from cortech.freesurfer import VolumeGeometry
 import cortech.utils
 
@@ -29,7 +29,7 @@ def triangulation():
     # |  \    /  |
     # | 0 \  / 4 |
     x, y, z = (-1, 0, 1), (-1, 0, 1), (0,)
-    return Surface(
+    return ManifoldSurface(
         np.dstack(np.meshgrid(x, y, z)).reshape(-1, 3),
         np.array(
             [
@@ -48,12 +48,12 @@ def triangulation():
 
 @pytest.fixture
 def one_triangle():
-    return Surface(np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]]), np.array([[0, 1, 2]]))
+    return ManifoldSurface(np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]]), np.array([[0, 1, 2]]))
 
 
 @pytest.fixture
 def diamond(diamond_vertices, diamond_faces):
-    return Surface(diamond_vertices, diamond_faces)
+    return ManifoldSurface(diamond_vertices, diamond_faces)
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def diamond_intersect(diamond, diamond_barycenters):
 
 @pytest.fixture
 def sphere(sphere_tuple):
-    return Surface(*sphere_tuple)
+    return ManifoldSurface(*sphere_tuple)
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ def sph_to_cart(theta, phi):
 
 class TestSurface:
     def test_create_surface(self, sphere_tuple):
-        s = Surface(*sphere_tuple)
+        s = ManifoldSurface(*sphere_tuple)
         np.testing.assert_allclose(s.vertices, sphere_tuple[0])
         np.testing.assert_allclose(s.faces, sphere_tuple[1])
 
@@ -102,13 +102,13 @@ class TestSurface:
             a_true = a_true + np.eye(diamond.n_vertices)
         np.testing.assert_array_equal(a.todense(), a_true)
 
-    def test_face_barycenters(self, diamond, diamond_barycenters):
-        b = diamond.face_barycenters()
+    def test_face_centers(self, diamond, diamond_barycenters):
+        b = diamond.face_centers()
         np.testing.assert_allclose(b, diamond_barycenters)
 
     def test_face_normals(self, diamond):
         n = diamond.face_normals()
-        n_true = cortech.utils.normalize(diamond.face_barycenters(), axis=1)
+        n_true = cortech.utils.normalize(diamond.face_centers(), axis=1)
         np.testing.assert_allclose(n, n_true)
 
     def test_vertex_normals(self, diamond):
@@ -187,22 +187,29 @@ class TestSurface:
         np.testing.assert_allclose(cc_label, 0)
         np.testing.assert_allclose(cc_size, diamond.n_faces)
 
-    def test_connected_components_constrained(self, diamond):
-        cc_label, cc_size = diamond.connected_components([0, 1, 2, 3])
+    def test_connected_components_cgal(self, diamond):
+        cc_label, cc_size = diamond.connected_components_cgal()
+        np.testing.assert_allclose(cc_label, 0)
+        np.testing.assert_allclose(cc_size, diamond.n_faces)
+
+    def test_connected_components_cgal_constrained(self, diamond):
+        # constrained the edges separating vertex 0 and 5 (top and bottom)
+        cc_label, cc_size = diamond.connected_components_cgal(
+            [[1, 2], [2, 3], [3, 4], [4, 1]])
         n = diamond.n_faces // 2
         np.testing.assert_allclose(
             cc_label, np.concatenate((np.full(n, 0), np.full(n, 1)))
         )
         np.testing.assert_allclose(cc_size, [n, n])
 
-    def test_points_inside_surface(self, diamond, diamond_barycenters, eps=1e-6):
+    def test_points_inside(self, diamond, diamond_barycenters, eps=1e-6):
         # Move points inwards
-        is_inside = diamond.points_inside_surface(diamond_barycenters * (1 - eps))
+        is_inside = diamond.points_inside(diamond_barycenters * (1 - eps))
         np.testing.assert_allclose(is_inside, True)
 
-    def test_points_outside_surface(self, diamond, diamond_barycenters, eps=1e-6):
+    def test_points_outside(self, diamond, diamond_barycenters, eps=1e-6):
         # Move points outwards
-        is_inside = diamond.points_inside_surface(diamond_barycenters * (1 + eps))
+        is_inside = diamond.points_inside(diamond_barycenters * (1 + eps))
         np.testing.assert_allclose(is_inside, False)
 
     def test_shape_smooth(self):
@@ -299,13 +306,13 @@ class TestSurface:
         np.testing.assert_allclose(p, projs)
         np.testing.assert_allclose(d, dists)
 
-    def test_prune(self, diamond):
+    def test_remove_unused_vertices(self, diamond):
         # *Prepend* fake vertices, adjust faces accordingly, and prune to
         # recover the original mesh.
         d = copy.deepcopy(diamond)
         d.vertices = np.concatenate((np.ones_like(d.vertices), d.vertices), axis=0)
         d.faces += diamond.n_vertices
-        d = d.prune()
+        d = d.remove_unused_vertices()
 
         np.testing.assert_allclose(d.vertices, diamond.vertices)
         np.testing.assert_allclose(d.faces, diamond.faces)
@@ -321,8 +328,8 @@ class TestSurface:
         ras2tkr = geom.get_affine("tkr", fr="scanner")
         diamond_vertices_tkr = nib.affines.apply_affine(ras2tkr, diamond_vertices)
 
-        s_ras = Surface(diamond_vertices, diamond_faces, "scanner", geom)
-        s_tkr = Surface(diamond_vertices_tkr, diamond_faces, "surface", geom)
+        s_ras = ManifoldSurface(diamond_vertices, diamond_faces, space="scanner", geometry=geom)
+        s_tkr = ManifoldSurface(diamond_vertices_tkr, diamond_faces, space="surface", geometry=geom)
 
         assert not np.allclose(s_ras.vertices, s_tkr.vertices)
 
@@ -336,43 +343,43 @@ class TestSurface:
 
 class TestSurfaceLoad:
     def test_from_freesurfer(self, BERT_DIR):
-        s = Surface.from_freesurfer(BERT_DIR / "surf" / "lh.white")
+        s = ManifoldSurface.from_freesurfer(BERT_DIR / "surf" / "lh.white")
         assert s.n_vertices == 2562
         assert s.n_faces == 5120
 
     def test_from_gifti(self, BERT_DIR):
-        s = Surface.from_gifti(BERT_DIR / "surf" / "lh.white.gii")
+        s = ManifoldSurface.from_gifti(BERT_DIR / "surf" / "lh.white.gii")
         assert s.n_vertices == 2562
         assert s.n_faces == 5120
 
     @pytest.mark.skip
     def test_from_vtk(self, BERT_DIR):
-        s = Surface.from_vtk(BERT_DIR / "surf" / "lh.white.vtk")
+        s = ManifoldSurface.from_vtk(BERT_DIR / "surf" / "lh.white.vtk")
         assert s.n_vertices == 2562
         assert s.n_faces == 5120
 
     def test_from_freesurfer_subject_dir(self, BERT_DIR):
-        s = Surface.from_freesurfer_subject_dir(BERT_DIR, "lh.white")
+        s = ManifoldSurface.from_freesurfer_subject_dir(BERT_DIR, "lh.white")
         assert s.n_vertices == 2562
         assert s.n_faces == 5120
 
     @pytest.mark.parametrize("filename", ["lh.white", "lh.pial"])
     def test_from_file(self, BERT_DIR, filename):
-        s0 = Surface.from_file(BERT_DIR / "surf" / filename)
-        s1 = Surface.from_freesurfer(BERT_DIR / "surf" / filename)
+        s0 = ManifoldSurface.from_file(BERT_DIR / "surf" / filename)
+        s1 = ManifoldSurface.from_freesurfer(BERT_DIR / "surf" / filename)
         np.testing.assert_allclose(s0.vertices, s1.vertices)
         np.testing.assert_allclose(s0.faces, s1.faces)
 
     def test_read_dataspace(self, BERT_DIR):
-        s_tkr = Surface.from_file(BERT_DIR / "surf" / "lh.white")
-        s_ras = Surface.from_file(BERT_DIR / "surf" / "lh.white.scanner")
+        s_tkr = ManifoldSurface.from_file(BERT_DIR / "surf" / "lh.white")
+        s_ras = ManifoldSurface.from_file(BERT_DIR / "surf" / "lh.white.scanner")
 
         assert s_tkr.is_surface_ras()
         assert s_ras.is_scanner_ras()
         assert not np.allclose(s_tkr.vertices, s_ras.vertices)
 
     def test_read_vol_geom(self, BERT_DIR, VOL_GEOM):
-        s = Surface.from_file(BERT_DIR / "surf" / "lh.white")
+        s = ManifoldSurface.from_file(BERT_DIR / "surf" / "lh.white")
 
         assert s.geometry.valid
         assert s.geometry.filename == VOL_GEOM["filename"]
@@ -384,8 +391,8 @@ class TestSurfaceLoad:
         np.testing.assert_allclose(s.geometry.cosines, VOL_GEOM["cosines"])
 
     def test_read_vol_geom_gifti(self, BERT_DIR):
-        sfs = Surface.from_file(BERT_DIR / "surf" / "lh.white")
-        sgii = Surface.from_file(BERT_DIR / "surf" / "lh.white.gii")
+        sfs = ManifoldSurface.from_file(BERT_DIR / "surf" / "lh.white")
+        sgii = ManifoldSurface.from_file(BERT_DIR / "surf" / "lh.white.gii")
 
         assert sfs.geometry.valid == sgii.geometry.valid
         assert sfs.geometry.filename == sgii.geometry.filename
@@ -397,7 +404,7 @@ class TestSurfaceLoad:
         np.testing.assert_allclose(sfs.geometry.cosines, sgii.geometry.cosines)
 
     def test_read_vol_geom_invalid(self, BERT_DIR):
-        s = Surface.from_file(BERT_DIR / "surf" / "lh.white.no_volgeom")
+        s = ManifoldSurface.from_file(BERT_DIR / "surf" / "lh.white.no_volgeom")
         assert not s.geometry.valid
 
 
@@ -417,12 +424,12 @@ class TestSurfaceSave:
         """Test that volume geometry information (whether present or not) is
         correctly preserved upon saving and loading a file.
         """
-        s = Surface.from_file(BERT_DIR / "surf" / filename)
+        s = ManifoldSurface.from_file(BERT_DIR / "surf" / filename)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             p = (Path(tmpdir) / "tmpfile").with_suffix(ext)
             s.save(p)
-            t = Surface.from_file(p)
+            t = ManifoldSurface.from_file(p)
 
         np.testing.assert_allclose(s.vertices, t.vertices)
         np.testing.assert_allclose(s.faces, t.faces)
@@ -456,7 +463,7 @@ class TestSphere:
 
         # the triangles of the surface being morphed *to* are unused so just
         # generate some random ones
-        dest_points = np.sum(sphere_reg.as_mesh() * weights[..., None], 1)
+        dest_points = np.sum(sphere_reg.mesh() * weights[..., None], 1)
 
         dest_field = sphere_reg.set_projection_and_resample(
             dest_points, source_field, method=method
