@@ -246,7 +246,7 @@ def freesurfer_thickness(
     """FreeSurfer-style thickness between two sets of vertices sharing the
     topology of `surf` (e.g., white -> inf)."""
     h = Hemisphere(surf.name, surf.white.new(inner), surf.pial.new(outer))
-    return h.compute_freesurfer_thickness()[0]
+    return h.compute_freesurfer_thickness()
 
 
 # ---------------------------------------------------------------------------
